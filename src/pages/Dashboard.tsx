@@ -54,6 +54,24 @@ const workflow = [
 export default function Dashboard() {
   const navigate = useNavigate();
   const projects = useProjectStore((s) => s.projects);
+  const tasks = useProjectStore((s) => s.tasks);
+
+  // 基于真实 store 数据计算统计
+  const totalVideos = projects.length;
+  const fissionOutputs = projects.reduce((s, p) => s + p.variants.length, 0);
+  const publishedTasks = tasks.filter((t) => t.status === "published");
+  const distributionReach = publishedTasks.reduce(
+    (s, t) => s + (t.stats?.views ?? 0),
+    0,
+  );
+  const engagement = publishedTasks.reduce(
+    (s, t) =>
+      s +
+      (t.stats?.likes ?? 0) +
+      (t.stats?.comments ?? 0) +
+      (t.stats?.shares ?? 0),
+    0,
+  );
 
   return (
     <div className="px-4 lg:px-8 py-8 max-w-[1400px] mx-auto">
@@ -131,7 +149,7 @@ export default function Dashboard() {
         <StatCard
           icon={Film}
           label="原始视频"
-          value={dashboardStats.totalVideos}
+          value={totalVideos}
           trend="+2 本周"
           sparkline={[1, 2, 2, 3, 3, 4, 5]}
           accent="gold"
@@ -140,7 +158,7 @@ export default function Dashboard() {
         <StatCard
           icon={Split}
           label="裂变产出"
-          value={dashboardStats.fissionOutputs}
+          value={fissionOutputs}
           trend="+8 本周"
           sparkline={dashboardStats.fissionTrend}
           accent="fission"
@@ -149,7 +167,7 @@ export default function Dashboard() {
         <StatCard
           icon={Eye}
           label="分发触达"
-          value={dashboardStats.distributionReach}
+          value={distributionReach}
           suffix="次"
           trend="+24%"
           sparkline={dashboardStats.reachTrend}
@@ -159,7 +177,7 @@ export default function Dashboard() {
         <StatCard
           icon={Heart}
           label="互动总量"
-          value={dashboardStats.engagement}
+          value={engagement}
           trend="+18%"
           sparkline={[2, 3, 4, 3, 5, 6, 8]}
           accent="emerald"

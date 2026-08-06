@@ -29,6 +29,7 @@ export default function Distribute() {
   );
   const [caption, setCaption] = useState("这一刻，全场沸腾 #高光时刻");
   const [publishing, setPublishing] = useState(false);
+  const pendingDistribution = useProjectStore((s) => s.pendingDistribution);
 
   const published = tasks.filter((t) => t.status === "published");
   const totals = useMemo(
@@ -48,17 +49,29 @@ export default function Distribute() {
     [published],
   );
 
-  // pick the most fissioned project as default source for demo distribution
+  // 来源项目：优先用裂变页传递的 pendingDistribution，否则回退到最近有变体的项目
   const sourceProject =
-    projects.find((p) => p.variants.length > 0) ?? projects[0];
+    (pendingDistribution
+      ? projects.find((p) => p.id === pendingDistribution.projectId)
+      : null) ?? projects.find((p) => p.variants.length > 0) ?? projects[0];
+
+  const sourceVariantIds =
+    pendingDistribution?.variantIds ??
+    sourceProject?.variants.slice(0, 2).map((v) => v.id) ??
+    [];
+
+  const sourceVariants = sourceProject
+    ? sourceProject.variants.filter((v) => sourceVariantIds.includes(v.id))
+    : [];
 
   const handlePublish = () => {
-    if (!sourceProject || selectedChannels.size === 0) return;
+    if (!sourceProject || sourceVariantIds.length === 0 || selectedChannels.size === 0)
+      return;
     setPublishing(true);
     setTimeout(() => {
       distribute(
         sourceProject.id,
-        sourceProject.variants.map((v) => v.id).slice(0, 1),
+        sourceVariantIds,
         [...selectedChannels],
         caption,
       );
@@ -108,6 +121,40 @@ export default function Distribute() {
         <MetricCard icon={MessageCircle} label="累计评论" value={totals.comments} accent="emerald" />
         <MetricCard icon={Share2} label="累计转发" value={totals.shares} accent="gold" />
       </div>
+
+      {/* 待分发变体清单 */}
+      {sourceVariants.length > 0 && (
+        <div className="card-surface p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-bold text-base flex items-center gap-2">
+              <Send className="w-4 h-4 text-fission-400" />
+              待分发变体
+            </h2>
+            <span className="text-[11px] text-bone-400">
+              来源：{sourceProject?.title.slice(0, 16)}… · {sourceVariants.length} 个
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2.5">
+            {sourceVariants.map((v) => (
+              <div
+                key={v.id}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.07]"
+              >
+                <PlatformGlyph
+                  platform={v.platform as PlatformKey}
+                  size={24}
+                />
+                <div className="text-[11px]">
+                  <div className="text-bone-100 font-medium">{v.style}</div>
+                  <div className="font-mono text-bone-400">
+                    {v.aspectRatio} · {v.duration}s
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-[1fr_1.3fr] gap-5">
         {/* Channel selection */}

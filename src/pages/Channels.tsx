@@ -18,6 +18,7 @@ import { cn, formatCompact } from "@/lib/utils";
 export default function Channels() {
   const channels = useProjectStore((s) => s.channels);
   const reconnect = useProjectStore((s) => s.reconnectChannel);
+  const disconnect = useProjectStore((s) => s.disconnectChannel);
 
   return (
     <div className="px-4 lg:px-8 py-8 max-w-[1400px] mx-auto">
@@ -86,7 +87,10 @@ export default function Channels() {
                       <TrendingUp className="w-3.5 h-3.5" />
                       近 7 日 +{formatCompact(Math.round(c.followers * 0.012))} 粉丝
                     </span>
-                    <button className="flex items-center gap-1.5 text-xs text-bone-300 hover:text-fission-300">
+                    <button
+                      onClick={() => disconnect(c.id)}
+                      className="flex items-center gap-1.5 text-xs text-bone-300 hover:text-fission-300"
+                    >
                       <Unlink className="w-3.5 h-3.5" />
                       解绑
                     </button>

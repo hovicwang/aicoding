@@ -31,6 +31,7 @@ export default function Fission() {
   );
   const setProjectStatus = useProjectStore((s) => s.setProjectStatus);
   const saveVariants = useProjectStore((s) => s.saveVariants);
+  const setPendingDistribution = useProjectStore((s) => s.setPendingDistribution);
 
   const [ratios, setRatios] = useState<Set<AspectRatio>>(
     new Set(["9:16", "1:1"]),
@@ -61,14 +62,15 @@ export default function Fission() {
   const generate = () => {
     if (comboCount === 0) return;
     setGenerating(true);
+    const stamp = Date.now();
     const combos: Variant[] = [];
-    let idx = 0;
-    [...ratios].forEach((ar) =>
-      [...durations].forEach((d) =>
-        [...platforms].forEach((pf) =>
-          [...styles].forEach((st) => {
+    [...ratios].forEach((ar, ai) =>
+      [...durations].forEach((d, di) =>
+        [...platforms].forEach((pf, pi) =>
+          [...styles].forEach((st, si) => {
+            const idx = ai * 100 + di * 10 + pi + si;
             combos.push({
-              id: `${project?.id}-gen-${idx++}`,
+              id: `${project?.id}-gen-${stamp}-${idx}`,
               projectId: project?.id || "",
               aspectRatio: ar,
               duration: d,
@@ -150,7 +152,12 @@ export default function Fission() {
           </div>
         </div>
         <button
-          onClick={() => navigate("/distribute")}
+          onClick={() => {
+            if (project && selected.size > 0) {
+              setPendingDistribution(project.id, [...selected]);
+              navigate("/distribute");
+            }
+          }}
           disabled={selected.size === 0}
           className={cn(
             "flex items-center gap-1.5 h-9 px-4 rounded-xl text-sm",

@@ -8,10 +8,12 @@ import {
   SkipBack,
   SkipForward,
   Volume2,
+  VolumeX,
   Maximize2,
+  Minimize2,
   Subtitles,
   Split,
-  Settings2,
+  Scissors,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { VideoThumb } from "@/components/ui/VideoThumb";
@@ -33,10 +35,32 @@ export default function Studio() {
     projectId ? s.analysisProgress[projectId] : undefined,
   );
   const startAnalysis = useProjectStore((s) => s.startAnalysis);
+  const setProjectStatus = useProjectStore((s) => s.setProjectStatus);
 
   const [playing, setPlaying] = useState(true);
   const [playhead, setPlayhead] = useState(0);
+  const [showSubtitle, setShowSubtitle] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const rafRef = useRef<number | null>(null);
+  const playerWrapRef = useRef<HTMLDivElement>(null);
+
+  const toggleFullscreen = () => {
+    const el = playerWrapRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {});
+    } else {
+      document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () =>
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
 
   useEffect(() => {
     if (!project) return;
@@ -124,10 +148,15 @@ export default function Studio() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl btn-ghost text-sm">
-            <Settings2 className="w-4 h-4" />
-            分析设置
-          </button>
+          {project.status === "ready" && selectedCount > 0 && (
+            <button
+              onClick={() => setProjectStatus(project.id, "clipped")}
+              className="flex items-center gap-1.5 h-9 px-3 rounded-xl btn-ghost text-sm"
+            >
+              <Scissors className="w-4 h-4 text-gold-400" />
+              保存剪辑
+            </button>
+          )}
           <button
             onClick={() => navigate(`/fission/${project.id}`)}
             disabled={selectedCount === 0}
@@ -150,16 +179,18 @@ export default function Studio() {
             animate={{ opacity: 1, y: 0 }}
             className="card-surface p-4"
           >
-            <div className="relative group">
+            <div className="relative group" ref={playerWrapRef}>
               <VideoThumb
                 gradient={project.thumbnail}
                 ratio="16:9"
                 playing={playing}
               />
               {/* simulated caption */}
-              <div className="absolute left-1/2 -translate-x-1/2 bottom-12 px-3 py-1 rounded bg-black/60 backdrop-blur text-[12px] text-white/90 max-w-[80%]">
-                {currentCaption(project.highlights, playhead)}
-              </div>
+              {showSubtitle && (
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-12 px-3 py-1 rounded bg-black/60 backdrop-blur text-[12px] text-white/90 max-w-[80%]">
+                  {currentCaption(project.highlights, playhead)}
+                </div>
+              )}
               {/* big play overlay */}
               <button
                 onClick={() => setPlaying((p) => !p)}
@@ -219,14 +250,40 @@ export default function Studio() {
                 </span>
               </div>
               <div className="ml-auto flex items-center gap-1">
-                <button className="p-1.5 rounded-lg hover:bg-white/5 text-bone-400">
+                <button
+                  onClick={() => setShowSubtitle((v) => !v)}
+                  className={cn(
+                    "p-1.5 rounded-lg hover:bg-white/5",
+                    showSubtitle ? "text-gold-400" : "text-bone-400",
+                  )}
+                  title="字幕开关"
+                >
                   <Subtitles className="w-4 h-4" />
                 </button>
-                <button className="p-1.5 rounded-lg hover:bg-white/5 text-bone-400">
-                  <Volume2 className="w-4 h-4" />
+                <button
+                  onClick={() => setMuted((v) => !v)}
+                  className={cn(
+                    "p-1.5 rounded-lg hover:bg-white/5",
+                    !muted ? "text-bone-200" : "text-bone-400",
+                  )}
+                  title="静音切换"
+                >
+                  {muted ? (
+                    <VolumeX className="w-4 h-4" />
+                  ) : (
+                    <Volume2 className="w-4 h-4" />
+                  )}
                 </button>
-                <button className="p-1.5 rounded-lg hover:bg-white/5 text-bone-400">
-                  <Maximize2 className="w-4 h-4" />
+                <button
+                  onClick={() => toggleFullscreen()}
+                  className="p-1.5 rounded-lg hover:bg-white/5 text-bone-400"
+                  title="全屏"
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="w-4 h-4" />
+                  ) : (
+                    <Maximize2 className="w-4 h-4" />
+                  )}
                 </button>
               </div>
             </div>

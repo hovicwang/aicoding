@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
-import { Scissors, Split, ArrowRight, Clock } from "lucide-react";
+import { Scissors, Split, ArrowRight, Clock, Trash2 } from "lucide-react";
 import type { Project } from "@/types";
+import { useProjectStore } from "@/store/useProjectStore";
 import { VideoThumb } from "@/components/ui/VideoThumb";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn, formatDuration } from "@/lib/utils";
@@ -14,14 +15,15 @@ export default function ProjectCard({
   index?: number;
 }) {
   const navigate = useNavigate();
+  const deleteProject = useProjectStore((s) => s.deleteProject);
   const selected = project.highlights.filter((h) => h.selected).length;
 
   const nextAction = () => {
     if (project.status === "analyzing") return;
     if (project.status === "ready" || project.status === "clipped") {
       navigate(`/studio/${project.id}`);
-    } else if (project.status === "fissioned") {
-      navigate(`/distribute`);
+    } else if (project.status === "fissioned" || project.status === "distributed") {
+      navigate(`/fission/${project.id}`);
     } else {
       navigate(`/studio/${project.id}`);
     }
@@ -31,8 +33,15 @@ export default function ProjectCard({
     project.status === "analyzing"
       ? "分析中"
       : project.status === "fissioned" || project.status === "distributed"
-        ? "查看成果"
+        ? "再次裂变"
         : "进入剪辑";
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm(`确认删除项目「${project.title}」？相关分发任务也会一并清除。`)) {
+      deleteProject(project.id);
+    }
+  };
 
   return (
     <motion.div
@@ -41,10 +50,14 @@ export default function ProjectCard({
       transition={{ delay: index * 0.07, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       className="card-surface group relative overflow-hidden hover:border-gold-500/30 transition-colors"
     >
-      <button
-        onClick={nextAction}
-        className="block w-full text-left"
-        disabled={project.status === "analyzing"}
+      <div
+        onClick={() => {
+          if (project.status !== "analyzing") nextAction();
+        }}
+        className={cn(
+          "block w-full text-left",
+          project.status === "analyzing" ? "cursor-default" : "cursor-pointer",
+        )}
       >
         <div className="p-3">
           <div className="relative">
@@ -64,6 +77,13 @@ export default function ProjectCard({
                 </span>
               </div>
             )}
+            <button
+              onClick={handleDelete}
+              className="absolute bottom-2 right-2 grid place-items-center w-7 h-7 rounded-lg bg-ink-950/70 border border-white/10 text-bone-400 hover:text-red-400 hover:border-red-500/40 opacity-0 group-hover:opacity-100 transition-all"
+              title="删除项目"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
         <div className="px-4 pb-4">
@@ -108,7 +128,7 @@ export default function ProjectCard({
             </span>
           </div>
         </div>
-      </button>
+      </div>
       {project.status === "analyzing" && (
         <div className="px-4 pb-4 -mt-1">
           <div className="h-1 rounded-full bg-white/5 overflow-hidden">

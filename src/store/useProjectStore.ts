@@ -29,6 +29,8 @@ interface ProjectState {
   tasks: DistributionTask[];
   // 分析进度：projectId -> 阶段索引(0-4) 与百分比
   analysisProgress: Record<string, { stage: number; percent: number }>;
+  // 裂变→分发 之间传递的待分发变体（projectId + variantIds）
+  pendingDistribution: { projectId: string; variantIds: string[] } | null;
 
   toggleHighlight: (projectId: string, highlightId: string) => void;
   selectAllHighlights: (projectId: string, value: boolean) => void;
@@ -44,6 +46,12 @@ interface ProjectState {
   addProject: (file: UploadFileInfo) => string;
   startAnalysis: (projectId: string) => void;
   reconnectChannel: (channelId: string) => void;
+  disconnectChannel: (channelId: string) => void;
+  deleteProject: (projectId: string) => void;
+  setPendingDistribution: (
+    projectId: string,
+    variantIds: string[],
+  ) => void;
   getProject: (projectId: string) => Project | undefined;
 }
 
@@ -54,6 +62,7 @@ export const useProjectStore = create<ProjectState>()(
       channels: seedChannels,
       tasks: seedTasks,
       analysisProgress: {},
+      pendingDistribution: null,
 
       getProject: (projectId) =>
         get().projects.find((p) => p.id === projectId),
@@ -126,7 +135,38 @@ export const useProjectStore = create<ProjectState>()(
               ? { ...p, status: "distributed" as ProjectStatus }
               : p,
           ),
+          pendingDistribution: null,
         }));
+
+        // 模拟分发任务状态推进：queued → publishing → published + 回收数据
+        newTasks.forEach((task, idx) => {
+          // 1. 进入 publishing
+          setTimeout(() => {
+            set((state) => ({
+              tasks: state.tasks.map((t) =>
+                t.id === task.id ? { ...t, status: "publishing" } : t,
+              ),
+            }));
+          }, 600 + idx * 400);
+
+          // 2. 完成发布并回收互动数据
+          setTimeout(() => {
+            set((state) => ({
+              tasks: state.tasks.map((t) =>
+                t.id === task.id
+                  ? {
+                      ...t,
+                      status: "published",
+                      publishedAt: new Date().toLocaleString("zh-CN", {
+                        hour12: false,
+                      }),
+                      stats: rollStats(),
+                    }
+                  : t,
+              ),
+            }));
+          }, 1800 + idx * 600);
+        });
       },
 
       setProjectStatus: (projectId, status) =>
@@ -224,6 +264,24 @@ export const useProjectStore = create<ProjectState>()(
               : c,
           ),
         })),
+
+      disconnectChannel: (channelId) =>
+        set((state) => ({
+          channels: state.channels.map((c) =>
+            c.id === channelId
+              ? { ...c, authStatus: "disconnected" as const }
+              : c,
+          ),
+        })),
+
+      deleteProject: (projectId) =>
+        set((state) => ({
+          projects: state.projects.filter((p) => p.id !== projectId),
+          tasks: state.tasks.filter((t) => t.projectId !== projectId),
+        })),
+
+      setPendingDistribution: (projectId, variantIds) =>
+        set({ pendingDistribution: { projectId, variantIds } }),
     }),
     {
       name: "clipforge-store",
@@ -237,3 +295,12 @@ export const useProjectStore = create<ProjectState>()(
 );
 
 export type { Highlight };
+
+// 生成分发后的模拟互动数据
+function rollStats() {
+  const views = Math.round(50000 + Math.random() * 2400000);
+  const likes = Math.round(views * (0.04 + Math.random() * 0.06));
+  const comments = Math.round(likes * (0.02 + Math.random() * 0.04));
+  const shares = Math.round(likes * (0.1 + Math.random() * 0.15));
+  return { views, likes, comments, shares };
+}
