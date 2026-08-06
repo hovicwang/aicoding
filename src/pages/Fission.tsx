@@ -30,6 +30,7 @@ export default function Fission() {
     s.projects.find((p) => p.id === projectId),
   );
   const setProjectStatus = useProjectStore((s) => s.setProjectStatus);
+  const saveVariants = useProjectStore((s) => s.saveVariants);
 
   const [ratios, setRatios] = useState<Set<AspectRatio>>(
     new Set(["9:16", "1:1"]),
@@ -86,13 +87,20 @@ export default function Fission() {
     // progressively mark ready
     combos.forEach((v, i) => {
       setTimeout(() => {
-        setVariants((prev) =>
-          prev.map((x) => (x.id === v.id ? { ...x, status: "ready" } : x)),
-        );
+        setVariants((prev) => {
+          const next = prev.map((x) =>
+            x.id === v.id ? { ...x, status: "ready" as const } : x,
+          );
+          // 全部就绪后持久化到 store
+          if (i === combos.length - 1 && project) {
+            saveVariants(project.id, next);
+            setProjectStatus(project.id, "fissioned");
+          }
+          return next;
+        });
         setSelected((prev) => new Set([...prev, v.id]));
         if (i === combos.length - 1) {
           setGenerating(false);
-          if (project) setProjectStatus(project.id, "fissioned");
         }
       }, 600 + i * 350);
     });

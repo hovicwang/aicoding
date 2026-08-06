@@ -18,6 +18,7 @@ import { VideoThumb } from "@/components/ui/VideoThumb";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import Timeline from "@/components/studio/Timeline";
 import SegmentPanel from "@/components/studio/SegmentPanel";
+import AnalysisProgress from "@/components/studio/AnalysisProgress";
 import { cn, formatTimecode } from "@/lib/utils";
 
 export default function Studio() {
@@ -28,6 +29,10 @@ export default function Studio() {
   );
   const toggleHighlight = useProjectStore((s) => s.toggleHighlight);
   const selectAll = useProjectStore((s) => s.selectAllHighlights);
+  const analysisProgress = useProjectStore((s) =>
+    projectId ? s.analysisProgress[projectId] : undefined,
+  );
+  const startAnalysis = useProjectStore((s) => s.startAnalysis);
 
   const [playing, setPlaying] = useState(true);
   const [playhead, setPlayhead] = useState(0);
@@ -53,6 +58,13 @@ export default function Studio() {
     };
   }, [playing, project]);
 
+  // 若项目处于分析中且尚未启动分析流程，自动启动
+  useEffect(() => {
+    if (project && project.status === "analyzing" && project.highlights.length === 0) {
+      startAnalysis(project.id);
+    }
+  }, [project, startAnalysis]);
+
   if (!project) {
     return (
       <div className="p-10 text-center text-bone-400">
@@ -62,6 +74,31 @@ export default function Studio() {
   }
 
   const selectedCount = project.highlights.filter((h) => h.selected).length;
+
+  // 分析中：展示分析进度视图
+  if (project.status === "analyzing" && project.highlights.length === 0) {
+    return (
+      <div className="px-4 lg:px-8 py-8 max-w-[1200px] mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            onClick={() => navigate("/upload")}
+            className="grid place-items-center w-9 h-9 rounded-xl btn-ghost shrink-0"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <h1 className="font-display text-xl font-extrabold truncate">
+            {project.title}
+          </h1>
+          <StatusBadge status={project.status} />
+        </div>
+        <AnalysisProgress
+          stage={analysisProgress?.stage ?? 0}
+          percent={analysisProgress?.percent ?? 0}
+          title={project.title}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 lg:px-8 py-6 max-w-[1500px] mx-auto">

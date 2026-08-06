@@ -299,3 +299,87 @@ export const dashboardStats = {
   reachTrend: [2.1, 3.4, 5.2, 4.8, 7.6, 9.2, 12.8],
   fissionTrend: [1, 2, 2, 3, 5, 4, 6],
 };
+
+// ---- Generators for newly uploaded projects ----
+
+const HIGHLIGHT_LABELS: Record<
+  Project["highlights"][number]["type"],
+  string[]
+> = {
+  peak: [
+    "全场沸腾瞬间",
+    "价格公布尖叫",
+    "高潮反转时刻",
+    "巅峰对决片段",
+    "震撼登场亮相",
+  ],
+  quote: [
+    "金句总结点题",
+    "创始人即兴反问",
+    "观点交锋火花",
+    "深度洞察金句",
+    "结尾寄语升华",
+  ],
+  action: [
+    "技术拆解硬核",
+    "产品实测瞬间",
+    "动作高光集锦",
+    "对比演示环节",
+    "操作流程展示",
+  ],
+  emotion: [
+    "观众情绪共鸣",
+    "感动落泪片段",
+    "热血冲刺时刻",
+    "温馨互动瞬间",
+    "坚持突破自我",
+  ],
+};
+
+const TYPES: Project["highlights"][number]["type"][] = [
+  "peak",
+  "quote",
+  "action",
+  "emotion",
+];
+
+export function generateHighlights(projectId: string, duration: number) {
+  // 根据时长生成 5-8 个高光片段，均匀分布带随机抖动
+  const count = Math.max(
+    5,
+    Math.min(8, Math.round(duration / 300) + 5),
+  );
+  const segment = duration / count;
+  const highlights: Project["highlights"] = [];
+  for (let i = 0; i < count; i++) {
+    const type = TYPES[i % TYPES.length];
+    const pool = HIGHLIGHT_LABELS[type];
+    const start = Math.round(segment * i + Math.random() * (segment * 0.3));
+    const len = 30 + Math.round(Math.random() * 60);
+    highlights.push({
+      id: `${projectId}-h${i + 1}`,
+      projectId,
+      start,
+      end: Math.min(start + len, duration),
+      label: pool[i % pool.length],
+      confidence: Number((0.72 + Math.random() * 0.26).toFixed(2)),
+      type,
+      selected: false,
+    });
+  }
+  return highlights;
+}
+
+export function pickThumb(seed: number) {
+  return THUMB_GRADIENTS[seed % THUMB_GRADIENTS.length];
+}
+
+// 分析阶段标签（用于上传与分析进度展示）
+export const ANALYSIS_STAGES = [
+  { key: "uploading", label: "上传原片", desc: "分片上传至云端对象存储" },
+  { key: "transcoding", label: "智能转码", desc: "4K 原片转码为多码率版本" },
+  { key: "detecting", label: "高光识别", desc: "AI 检测高潮/金句/动作/情绪" },
+  { key: "subtitling", label: "字幕生成", desc: "语音识别并生成时间轴字幕" },
+  { key: "done", label: "分析完成", desc: "高光片段已就绪，可进入剪辑" },
+];
+

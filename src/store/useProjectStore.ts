@@ -6,20 +6,34 @@ import type {
   Highlight,
   Project,
   ProjectStatus,
+  Variant,
 } from "@/types";
 import {
   channels as seedChannels,
   distributionTasks as seedTasks,
   projects as seedProjects,
+  generateHighlights,
+  pickThumb,
 } from "@/data/mock";
+
+export interface UploadFileInfo {
+  title: string;
+  duration: number;
+  source: string;
+  sizeLabel: string;
+}
 
 interface ProjectState {
   projects: Project[];
   channels: Channel[];
   tasks: DistributionTask[];
+  // 分析进度：projectId -> 阶段索引(0-4) 与百分比
+  analysisProgress: Record<string, { stage: number; percent: number }>;
+
   toggleHighlight: (projectId: string, highlightId: string) => void;
   selectAllHighlights: (projectId: string, value: boolean) => void;
   generateVariants: (projectId: string) => void;
+  saveVariants: (projectId: string, variants: Variant[]) => void;
   distribute: (
     projectId: string,
     variantIds: string[],
@@ -27,7 +41,8 @@ interface ProjectState {
     caption: string,
   ) => void;
   setProjectStatus: (projectId: string, status: ProjectStatus) => void;
-  addProject: (title: string) => string;
+  addProject: (file: UploadFileInfo) => string;
+  startAnalysis: (projectId: string) => void;
   reconnectChannel: (channelId: string) => void;
   getProject: (projectId: string) => Project | undefined;
 }
@@ -38,6 +53,7 @@ export const useProjectStore = create<ProjectState>()(
       projects: seedProjects,
       channels: seedChannels,
       tasks: seedTasks,
+      analysisProgress: {},
 
       getProject: (projectId) =>
         get().projects.find((p) => p.id === projectId),
@@ -54,10 +70,6 @@ export const useProjectStore = create<ProjectState>()(
                       ? { ...h, selected: !h.selected }
                       : h,
                   ),
-                  status:
-                    p.highlights.some((h) => h.id === highlightId && !h.selected)
-                      ? "clipped"
-                      : p.status,
                 },
           ),
         })),
@@ -83,6 +95,13 @@ export const useProjectStore = create<ProjectState>()(
             p.id !== projectId
               ? p
               : { ...p, status: "fissioned" as ProjectStatus },
+          ),
+        })),
+
+      saveVariants: (projectId, variants) =>
+        set((state) => ({
+          projects: state.projects.map((p) =>
+            p.id !== projectId ? p : { ...p, variants },
           ),
         })),
 
@@ -117,28 +136,84 @@ export const useProjectStore = create<ProjectState>()(
           ),
         })),
 
-      addProject: (title) => {
+      addProject: (file) => {
         const id = `p-${Date.now()}`;
+        const seed = Date.now() % 6;
         set((state) => ({
           projects: [
             {
               id,
-              title,
+              title: file.title,
               videoUrl: "",
-              duration: 0,
+              duration: file.duration,
               status: "analyzing" as ProjectStatus,
-              thumbnail: "",
+              thumbnail: pickThumb(seed),
               uploadedAt: new Date().toLocaleString("zh-CN", {
                 hour12: false,
               }),
-              source: "上传中 · 等待分析",
+              source: `${file.source} · ${file.sizeLabel}`,
               highlights: [],
               variants: [],
             },
             ...state.projects,
           ],
+          analysisProgress: {
+            ...get().analysisProgress,
+            [id]: { stage: 0, percent: 0 },
+          },
         }));
         return id;
+      },
+
+      startAnalysis: (projectId) => {
+        const project = get().projects.find((p) => p.id === projectId);
+        if (!project || project.highlights.length > 0) return;
+
+        // 模拟 5 阶段分析流程，逐阶段推进进度
+        const stages = 5; // uploading / transcoding / detecting / subtitling / done
+        const stageDuration = 900; // 每阶段基础时长(ms)
+        let elapsed = 0;
+        const totalDuration = stages * stageDuration;
+
+        const interval = setInterval(() => {
+          elapsed += 80;
+          const percent = Math.min(100, (elapsed / totalDuration) * 100);
+          const stage = Math.min(stages - 1, Math.floor(percent / 20));
+
+          set((state) => ({
+            analysisProgress: {
+              ...state.analysisProgress,
+              [projectId]: { stage, percent },
+            },
+          }));
+
+          if (percent >= 100) {
+            clearInterval(interval);
+            // 填充高光并切换状态
+            set((state) => {
+              const cur = state.projects.find((p) => p.id === projectId);
+              if (!cur || cur.highlights.length > 0) return state;
+              const highlights = generateHighlights(
+                projectId,
+                cur.duration || 1800,
+              );
+              // 默认选中置信度 > 0.85 的片段
+              highlights.forEach((h) => {
+                if (h.confidence > 0.85) h.selected = true;
+              });
+              const { [projectId]: _removed, ...rest } = state.analysisProgress;
+              void _removed;
+              return {
+                projects: state.projects.map((p) =>
+                  p.id === projectId
+                    ? { ...p, highlights, status: "ready" as ProjectStatus }
+                    : p,
+                ),
+                analysisProgress: rest,
+              };
+            });
+          }
+        }, 80);
       },
 
       reconnectChannel: (channelId) =>
