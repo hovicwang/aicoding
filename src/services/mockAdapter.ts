@@ -15,6 +15,9 @@ import {
   generateHighlights,
   THUMB_GRADIENTS,
 } from "@/data/mock";
+import { saveSourceVideo } from "./videoStore";
+import { probeVideo } from "./videoMeta";
+import { transcodeVariant } from "./ffmpegService";
 
 /* ============================================================
  * API 契约：后端就绪后由真实 HTTP 实现这些接口，UI 无需改动。
@@ -22,8 +25,8 @@ import {
  * ========================================================== */
 
 export interface UploadParams {
-  fileName: string;
-  fileSize: number;
+  /** 真实视频文件，存入 IndexedDB 后可在浏览器内播放 */
+  file: File;
   /** 进度回调（0-100） */
   onProgress?: (percent: number) => void;
   /** 取消信号 */
@@ -36,6 +39,10 @@ export interface UploadResponse {
   duration: number;
   source: string;
   sizeLabel: string;
+  /** 视频首帧缩略图（data URL），用于卡片展示 */
+  thumbnail: string;
+  width: number;
+  height: number;
 }
 
 export interface AnalysisParams {
@@ -146,29 +153,44 @@ function rollStats(): DistributionStats {
 }
 
 export const mockClipService: ClipService = {
-  async upload({ fileName, fileSize, onProgress, signal }): Promise<
-    Result<UploadResponse>
-  > {
+  async upload({ file, onProgress, signal }): Promise<Result<UploadResponse>> {
     try {
+      // 先读取真实元数据（时长/分辨率/首帧缩略图）
+      let meta;
+      try {
+        meta = await probeVideo(file);
+      } catch (e) {
+        return err(
+          ERROR_CODES.VALIDATION,
+          (e as Error).message,
+          false,
+        );
+      }
+
       // 模拟分片上传进度
       let pct = 0;
       while (pct < 100) {
-        await delay(220, signal);
+        await delay(120, signal);
         pct = Math.min(100, pct + Math.random() * 18 + 6);
         onProgress?.(pct);
       }
-      const estDuration = Math.max(
-        120,
-        Math.round(fileSize / (50 * 1024 * 1024)) * 60,
-      );
+
+      const projectId = `p-${Date.now()}`;
+      // 持久化到 IndexedDB，刷新后仍可播放
+      await saveSourceVideo(projectId, file);
+
       const flaky = maybeFail<null>(null);
       if (!flaky.ok) return flaky;
+
       return ok({
-        projectId: `p-${Date.now()}`,
-        title: fileName.replace(/\.[^.]+$/, ""),
-        duration: estDuration,
-        source: `${extOf(fileName)} 原片`,
-        sizeLabel: formatSize(fileSize),
+        projectId,
+        title: file.name.replace(/\.[^.]+$/, ""),
+        duration: Math.round(meta.duration) || 120,
+        source: `${extOf(file.name)} 原片`,
+        sizeLabel: formatSize(file.size),
+        thumbnail: meta.thumbnail,
+        width: meta.width,
+        height: meta.height,
       });
     } catch (e) {
       if ((e as Error).message === "aborted") {
@@ -247,10 +269,28 @@ export const mockClipService: ClipService = {
 
       const total = combos.length;
       for (let i = 0; i < total; i++) {
-        await delay(350, signal);
-        const v = { ...combos[i], status: "ready" as const };
-        combos[i] = v;
-        onVariantReady?.(v, i, total);
+        if (signal?.aborted) throw new Error("aborted");
+        const combo = combos[i];
+        try {
+          // 真实 ffmpeg 转码：裁切指定时长 + 适配目标比例
+          const startSec = i * combo.duration; // 简单错开起始点，避免片段重叠
+          await transcodeVariant({
+            projectId,
+            variantId: combo.id,
+            aspectRatio: combo.aspectRatio,
+            duration: combo.duration,
+            start: startSec,
+          });
+          const v = { ...combo, status: "ready" as const };
+          combos[i] = v;
+          onVariantReady?.(v, i, total);
+        } catch (e) {
+          if ((e as Error).message === "aborted") throw e;
+          // 单个变体失败标记为 failed，继续处理其余
+          const v = { ...combo, status: "failed" as const };
+          combos[i] = v;
+          onVariantReady?.(v, i, total);
+        }
       }
       const flaky = maybeFail<null>(null);
       if (!flaky.ok) return flaky;

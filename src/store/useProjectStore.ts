@@ -15,6 +15,7 @@ import {
 } from "@/data/mock";
 import { clipService } from "@/services";
 import type { Result } from "@/services";
+import { deleteProjectVideos, deleteVariantVideo, revokeProjectUrls } from "@/services/videoStore";
 import { toast } from "@/components/ui/toastStore";
 
 /* ============================================================
@@ -158,7 +159,12 @@ export const useProjectStore = create<ProjectState>()(
           ),
         })),
 
-      deleteProject: (projectId) =>
+      deleteProject: (projectId) => {
+        const project = get().projects.find((p) => p.id === projectId);
+        const variantIds = project?.variants.map((v) => v.id) ?? [];
+        // 清理 IndexedDB 与 blob URL 缓存
+        void deleteProjectVideos(projectId, variantIds);
+        revokeProjectUrls(projectId, variantIds);
         set((state) => ({
           projects: state.projects.filter((p) => p.id !== projectId),
           tasks: state.tasks.filter((t) => t.projectId !== projectId),
@@ -167,19 +173,23 @@ export const useProjectStore = create<ProjectState>()(
               ([k]) => k !== projectId,
             ),
           ),
-        })),
+        }));
+      },
 
       setPendingDistribution: (projectId, variantIds) =>
         set({ pendingDistribution: { projectId, variantIds } }),
 
-      removeVariant: (projectId, variantId) =>
+      removeVariant: (projectId, variantId) => {
+        void deleteVariantVideo(variantId);
+        revokeProjectUrls(projectId, [variantId]);
         set((state) => ({
           projects: state.projects.map((p) =>
             p.id !== projectId
               ? p
               : { ...p, variants: p.variants.filter((v) => v.id !== variantId) },
           ),
-        })),
+        }));
+      },
 
       /* ---------- 上传 + 分析（合并为一次端到端流程） ---------- */
       uploadAndAnalyze: async (file, onUploadProgress) => {
@@ -192,8 +202,7 @@ export const useProjectStore = create<ProjectState>()(
         });
 
         const up = await clipService.upload({
-          fileName: file.name,
-          fileSize: file.size,
+          file,
           onProgress: onUploadProgress,
           signal: controller.signal,
         });
@@ -203,20 +212,20 @@ export const useProjectStore = create<ProjectState>()(
           return { ok: false, error: ur.error };
         }
 
-        // 创建项目
-        const seed = Date.now() % 6;
+        // 创建项目（videoUrl 标记为 "idb:"，播放时从 IndexedDB 取真实 blob）
         const projectId = ur.data.projectId;
+        const data = ur.data;
         set((state) => ({
           projects: [
             {
               id: projectId,
-              title: ur.data.title,
-              videoUrl: "",
-              duration: ur.data.duration,
+              title: data.title,
+              videoUrl: `idb:${projectId}`,
+              duration: data.duration,
               status: "analyzing" as ProjectStatus,
-              thumbnail: pickThumb(seed),
+              thumbnail: data.thumbnail || pickThumb(Date.now() % 6),
               uploadedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
-              source: `${ur.data.source} · ${ur.data.sizeLabel}`,
+              source: `${data.source} · ${data.sizeLabel}`,
               highlights: [],
               variants: [],
             },

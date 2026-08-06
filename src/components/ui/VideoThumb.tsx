@@ -25,6 +25,10 @@ export function VideoThumb({
           ? "aspect-[4/5]"
           : "aspect-video";
 
+  // 真实缩略图（data URL 或 http URL）优先用 <img>，否则回退到渐变色块
+  const isRealImage =
+    gradient?.startsWith("data:") || gradient?.startsWith("http");
+
   return (
     <div
       className={cn(
@@ -32,18 +36,31 @@ export function VideoThumb({
         ratioClass,
         className,
       )}
-      style={{
-        backgroundImage: gradient || "linear-gradient(135deg,#262220,#161412)",
-      }}
+      style={
+        isRealImage
+          ? undefined
+          : {
+              backgroundImage: gradient || "linear-gradient(135deg,#262220,#161412)",
+            }
+      }
     >
+      {isRealImage && (
+        <img
+          src={gradient}
+          alt={label ?? "视频缩略图"}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      )}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/10" />
-      <div
-        className="absolute inset-0 opacity-[0.08] mix-blend-overlay"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(90deg,#fff 0 1px,transparent 1px 28px)",
-        }}
-      />
+      {!isRealImage && (
+        <div
+          className="absolute inset-0 opacity-[0.08] mix-blend-overlay"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(90deg,#fff 0 1px,transparent 1px 28px)",
+          }}
+        />
+      )}
       <div
         className={cn(
           "absolute inset-0 grid place-items-center transition-transform group-hover:scale-110",

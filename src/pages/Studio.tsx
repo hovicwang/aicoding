@@ -14,13 +14,15 @@ import {
   Subtitles,
   Split,
   Scissors,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
-import { VideoThumb } from "@/components/ui/VideoThumb";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import Timeline from "@/components/studio/Timeline";
 import SegmentPanel from "@/components/studio/SegmentPanel";
 import AnalysisProgress from "@/components/studio/AnalysisProgress";
+import { useSourceVideoUrl } from "@/hooks/useVideoUrl";
 import { toast } from "@/components/ui/toastStore";
 import { cn, formatTimecode } from "@/lib/utils";
 
@@ -42,13 +44,18 @@ export default function Studio() {
     projectId ? s.async[`analysis-${projectId}`] : undefined,
   );
 
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [duration, setDuration] = useState(project?.duration ?? 0);
+  const [waiting, setWaiting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showSubtitle, setShowSubtitle] = useState(true);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const rafRef = useRef<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerWrapRef = useRef<HTMLDivElement>(null);
+
+  const videoUrl = useSourceVideoUrl(project?.videoUrl);
 
   const toggleFullscreen = () => {
     const el = playerWrapRef.current;
@@ -67,25 +74,50 @@ export default function Studio() {
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
+  // 播放/暂停同步到 <video>
   useEffect(() => {
-    if (!project) return;
-    if (playhead >= project.duration) setPlayhead(0);
-  }, [playhead, project]);
+    const v = videoRef.current;
+    if (!v) return;
+    if (playing) v.play().catch(() => setPlaying(false));
+    else v.pause();
+  }, [playing, videoUrl]);
 
+  // timeupdate 同步 playhead
   useEffect(() => {
-    if (!playing || !project) return;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - last) / 1000;
-      last = now;
-      setPlayhead((p) => (p + dt * 24) % (project.duration || 1));
-      rafRef.current = requestAnimationFrame(tick);
+    const v = videoRef.current;
+    if (!v) return;
+    const onTime = () => setPlayhead(v.currentTime);
+    const onDur = () => setDuration(v.duration || project?.duration || 0);
+    const onWait = () => setWaiting(true);
+    const onPlay = () => {
+      setWaiting(false);
+      setPlaying(true);
     };
-    rafRef.current = requestAnimationFrame(tick);
+    const onPause = () => setPlaying(false);
+    const onErr = () =>
+      setLoadError("视频加载失败，文件可能已损坏或不被浏览器支持");
+    const onEnded = () => setPlaying(false);
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("loadedmetadata", onDur);
+    v.addEventListener("durationchange", onDur);
+    v.addEventListener("waiting", onWait);
+    v.addEventListener("playing", onPlay);
+    v.addEventListener("play", onPlay);
+    v.addEventListener("pause", onPause);
+    v.addEventListener("error", onErr);
+    v.addEventListener("ended", onEnded);
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("loadedmetadata", onDur);
+      v.removeEventListener("durationchange", onDur);
+      v.removeEventListener("waiting", onWait);
+      v.removeEventListener("playing", onPlay);
+      v.removeEventListener("play", onPlay);
+      v.removeEventListener("pause", onPause);
+      v.removeEventListener("error", onErr);
+      v.removeEventListener("ended", onEnded);
     };
-  }, [playing, project]);
+  }, [videoUrl, project?.duration]);
 
   // 若项目处于分析中且尚未启动/未失败，自动启动分析流程
   useEffect(() => {
@@ -200,44 +232,96 @@ export default function Studio() {
             animate={{ opacity: 1, y: 0 }}
             className="card-surface p-4"
           >
-            <div className="relative group" ref={playerWrapRef}>
-              <VideoThumb
-                gradient={project.thumbnail}
-                ratio="16:9"
-                playing={playing}
-              />
-              {/* simulated caption */}
-              {showSubtitle && (
+            <div className="relative group bg-black rounded-xl overflow-hidden" ref={playerWrapRef}>
+              {videoUrl ? (
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  className="w-full aspect-video object-contain bg-black"
+                  playsInline
+                  muted={muted}
+                  onClick={() => setPlaying((p) => !p)}
+                />
+              ) : (
+                <div className="w-full aspect-video grid place-items-center bg-gradient-to-br from-ink-900 to-ink-950">
+                  {loadError ? (
+                    <div className="text-center px-6">
+                      <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                      <p className="text-sm text-red-300">{loadError}</p>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <Loader2 className="w-8 h-8 text-gold-400 animate-spin mx-auto mb-2" />
+                      <p className="text-xs text-bone-400">正在加载视频…</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 加载中指示 */}
+              {waiting && videoUrl && !loadError && (
+                <div className="absolute inset-0 grid place-items-center bg-black/30 pointer-events-none">
+                  <Loader2 className="w-8 h-8 text-gold-400 animate-spin" />
+                </div>
+              )}
+
+              {/* 字幕（基于高光片段标签） */}
+              {showSubtitle && playing && videoUrl && !loadError && (
                 <div className="absolute left-1/2 -translate-x-1/2 bottom-12 px-3 py-1 rounded bg-black/60 backdrop-blur text-[12px] text-white/90 max-w-[80%]">
                   {currentCaption(project.highlights, playhead)}
                 </div>
               )}
-              {/* big play overlay */}
-              <button
-                onClick={() => setPlaying((p) => !p)}
-                className="absolute inset-0 grid place-items-center"
-              >
-                <span
-                  className={cn(
-                    "grid place-items-center rounded-full backdrop-blur-md border border-white/30 transition-opacity",
-                    playing
-                      ? "w-14 h-14 bg-gold-500/90 opacity-0 group-hover:opacity-100"
-                      : "w-16 h-16 bg-gold-500/90 opacity-100",
-                  )}
+
+              {/* 大播放按钮 */}
+              {videoUrl && !loadError && (
+                <button
+                  onClick={() => setPlaying((p) => !p)}
+                  className="absolute inset-0 grid place-items-center"
                 >
-                  {playing ? (
-                    <Pause className="w-6 h-6 text-ink-950" fill="currentColor" />
-                  ) : (
-                    <Play className="w-6 h-6 ml-0.5 text-ink-950" fill="currentColor" />
-                  )}
-                </span>
-              </button>
+                  <span
+                    className={cn(
+                      "grid place-items-center rounded-full backdrop-blur-md border border-white/30 transition-opacity",
+                      playing
+                        ? "w-14 h-14 bg-gold-500/90 opacity-0 group-hover:opacity-100"
+                        : "w-16 h-16 bg-gold-500/90 opacity-100",
+                    )}
+                  >
+                    {playing ? (
+                      <Pause className="w-6 h-6 text-ink-950" fill="currentColor" />
+                    ) : (
+                      <Play className="w-6 h-6 ml-0.5 text-ink-950" fill="currentColor" />
+                    )}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* 进度条（可拖拽 seek） */}
+            <div className="mt-3 flex items-center gap-3">
+              <div
+                className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden cursor-pointer"
+                onClick={(e) => {
+                  const v = videoRef.current;
+                  if (!v || !duration) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = (e.clientX - rect.left) / rect.width;
+                  v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
+                }}
+              >
+                <div
+                  className="h-full bg-gradient-to-r from-gold-500 to-fission-500"
+                  style={{ width: `${duration ? (playhead / duration) * 100 : 0}%` }}
+                />
+              </div>
             </div>
 
             {/* controls */}
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-2 flex items-center gap-3">
               <button
-                onClick={() => setPlayhead((p) => Math.max(0, p - 10))}
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (v) v.currentTime = Math.max(0, v.currentTime - 10);
+                }}
                 className="p-1.5 rounded-lg hover:bg-white/5 text-bone-300"
               >
                 <SkipBack className="w-4 h-4" />
@@ -253,9 +337,10 @@ export default function Studio() {
                 )}
               </button>
               <button
-                onClick={() =>
-                  setPlayhead((p) => Math.min(project.duration, p + 10))
-                }
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (v) v.currentTime = Math.min(duration, v.currentTime + 10);
+                }}
                 className="p-1.5 rounded-lg hover:bg-white/5 text-bone-300"
               >
                 <SkipForward className="w-4 h-4" />
@@ -267,7 +352,7 @@ export default function Studio() {
                 </span>
                 <span className="text-bone-600">
                   {" "}
-                  / {formatTimecode(project.duration).split(".")[0]}
+                  / {formatTimecode(duration || project.duration).split(".")[0]}
                 </span>
               </div>
               <div className="ml-auto flex items-center gap-1">
@@ -282,7 +367,13 @@ export default function Studio() {
                   <Subtitles className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setMuted((v) => !v)}
+                  onClick={() => {
+                    setMuted((m) => {
+                      const next = !m;
+                      if (videoRef.current) videoRef.current.muted = next;
+                      return next;
+                    });
+                  }}
                   className={cn(
                     "p-1.5 rounded-lg hover:bg-white/5",
                     !muted ? "text-bone-200" : "text-bone-400",
