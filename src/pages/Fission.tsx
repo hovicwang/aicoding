@@ -1,6 +1,5 @@
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "motion/react";
 import {
   ArrowLeft,
   Split,
@@ -102,7 +101,8 @@ export default function Fission() {
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -280,7 +280,8 @@ export default function Fission() {
 
 function toggleSet<T>(set: Set<T>, setter: (s: Set<T>) => void, value: T) {
   const next = new Set(set);
-  next.has(value) ? next.delete(value) : next.add(value);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
   setter(next);
 }
 
