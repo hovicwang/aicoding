@@ -9,19 +9,25 @@ import {
   Sparkles,
   Wand2,
   Layers,
+  Trash2,
+  AlertTriangle,
+  RotateCw,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ErrorView } from "@/components/ui/StateView";
 import VariantCard from "@/components/fission/VariantCard";
 import {
   ASPECT_RATIOS,
   CLIP_DURATIONS,
   PLATFORMS,
   STYLE_PRESETS,
-  THUMB_GRADIENTS,
 } from "@/data/mock";
-import type { AspectRatio, ClipDuration, PlatformKey, Variant } from "@/types";
+import { toast } from "@/components/ui/toastStore";
+import type { AspectRatio, ClipDuration, PlatformKey } from "@/types";
 import { cn } from "@/lib/utils";
+
+const MAX_COMBOS = 24; // 单次裂变上限，防止过载
 
 export default function Fission() {
   const { projectId } = useParams();
@@ -29,9 +35,15 @@ export default function Fission() {
   const project = useProjectStore((s) =>
     s.projects.find((p) => p.id === projectId),
   );
-  const setProjectStatus = useProjectStore((s) => s.setProjectStatus);
-  const saveVariants = useProjectStore((s) => s.saveVariants);
-  const setPendingDistribution = useProjectStore((s) => s.setPendingDistribution);
+  const generateFission = useProjectStore((s) => s.generateFission);
+  const cancelFission = useProjectStore((s) => s.cancelFission);
+  const removeVariant = useProjectStore((s) => s.removeVariant);
+  const setPendingDistribution = useProjectStore(
+    (s) => s.setPendingDistribution,
+  );
+  const fissionAsync = useProjectStore((s) =>
+    projectId ? s.async[`fission-${projectId}`] : undefined,
+  );
 
   const [ratios, setRatios] = useState<Set<AspectRatio>>(
     new Set(["9:16", "1:1"]),
@@ -43,69 +55,46 @@ export default function Fission() {
     new Set(["douyin", "xiaohongshu"]),
   );
   const [styles, setStyles] = useState<Set<string>>(new Set(["高燃卡点"]));
-
-  const [variants, setVariants] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [generating, setGenerating] = useState(false);
 
-  // seed existing variants from project
+  const variants = project?.variants ?? [];
+  const generating = fissionAsync?.status === "loading";
+  const failed = fissionAsync?.status === "error";
+
+  // 已有变体进入时默认全选
   useEffect(() => {
-    if (project && project.variants.length > 0 && variants.length === 0) {
-      setVariants(project.variants);
-      setSelected(new Set(project.variants.map((v) => v.id)));
+    if (variants.length > 0 && selected.size === 0) {
+      setSelected(new Set(variants.filter((v) => v.status === "ready").map((v) => v.id)));
     }
-  }, [project, variants.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   const comboCount =
     ratios.size * durations.size * platforms.size * styles.size;
+  const overLimit = comboCount > MAX_COMBOS;
 
-  const generate = () => {
-    if (comboCount === 0) return;
-    setGenerating(true);
-    const stamp = Date.now();
-    const combos: Variant[] = [];
-    [...ratios].forEach((ar, ai) =>
-      [...durations].forEach((d, di) =>
-        [...platforms].forEach((pf, pi) =>
-          [...styles].forEach((st, si) => {
-            const idx = ai * 100 + di * 10 + pi + si;
-            combos.push({
-              id: `${project?.id}-gen-${stamp}-${idx}`,
-              projectId: project?.id || "",
-              aspectRatio: ar,
-              duration: d,
-              platform: pf,
-              style: st,
-              thumbnail: THUMB_GRADIENTS[idx % THUMB_GRADIENTS.length],
-              status: "generating",
-            });
-          }),
-        ),
-      ),
-    );
-    setVariants(combos);
+  const generate = async () => {
+    if (!project) return;
+    if (comboCount === 0) {
+      toast.error("请至少勾选每个维度的一项");
+      return;
+    }
+    if (overLimit) {
+      toast.error(`单次最多生成 ${MAX_COMBOS} 个变体，当前 ${comboCount} 个`);
+      return;
+    }
     setSelected(new Set());
-
-    // progressively mark ready
-    combos.forEach((v, i) => {
-      setTimeout(() => {
-        setVariants((prev) => {
-          const next = prev.map((x) =>
-            x.id === v.id ? { ...x, status: "ready" as const } : x,
-          );
-          // 全部就绪后持久化到 store
-          if (i === combos.length - 1 && project) {
-            saveVariants(project.id, next);
-            setProjectStatus(project.id, "fissioned");
-          }
-          return next;
-        });
-        setSelected((prev) => new Set([...prev, v.id]));
-        if (i === combos.length - 1) {
-          setGenerating(false);
-        }
-      }, 600 + i * 350);
-    });
+    await generateFission(
+      project.id,
+      {
+        ratios: [...ratios],
+        durations: [...durations],
+        platforms: [...platforms],
+        styles: [...styles],
+      },
+      // 流式就绪时自动选中
+      (v) => setSelected((prev) => new Set([...prev, v.id])),
+    );
   };
 
   const toggleSelect = (id: string) =>
@@ -121,6 +110,17 @@ export default function Fission() {
     setSelected(
       selected.size === readyIds.length ? new Set() : new Set(readyIds),
     );
+  };
+
+  const handleRemove = (id: string) => {
+    if (!project) return;
+    removeVariant(project.id, id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    toast.info("变体已删除");
   };
 
   if (!project) {
@@ -153,7 +153,7 @@ export default function Fission() {
         </div>
         <button
           onClick={() => {
-            if (project && selected.size > 0) {
+            if (selected.size > 0) {
               setPendingDistribution(project.id, [...selected]);
               navigate("/distribute");
             }
@@ -184,12 +184,14 @@ export default function Fission() {
             title="画幅比例"
             options={ASPECT_RATIOS as unknown as string[]}
             selected={ratios}
+            disabled={generating}
             onToggle={(v) => toggleSet(ratios, setRatios, v as AspectRatio)}
           />
           <DimGroup
             title="片段时长"
             options={CLIP_DURATIONS.map(String)}
             suffix="s"
+            disabled={generating}
             selected={durations as unknown as Set<string>}
             onToggle={(v) =>
               toggleSet(durations, setDurations, Number(v) as ClipDuration)
@@ -201,12 +203,14 @@ export default function Fission() {
             labels={Object.fromEntries(
               Object.entries(PLATFORMS).map(([k, v]) => [k, v.name]),
             )}
+            disabled={generating}
             selected={platforms}
             onToggle={(v) => toggleSet(platforms, setPlatforms, v as PlatformKey)}
           />
           <DimGroup
             title="风格预设"
             options={STYLE_PRESETS}
+            disabled={generating}
             selected={styles}
             onToggle={(v) => toggleSet(styles, setStyles, v)}
           />
@@ -214,32 +218,42 @@ export default function Fission() {
           <div className="mt-5 pt-5 border-t border-white/[0.06]">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs text-bone-400">预计生成</span>
-              <span className="font-mono text-2xl font-bold text-gradient-fission">
+              <span
+                className={cn(
+                  "font-mono text-2xl font-bold",
+                  overLimit ? "text-red-400" : "text-gradient-fission",
+                )}
+              >
                 {comboCount}
               </span>
             </div>
-            <button
-              onClick={generate}
-              disabled={generating || comboCount === 0}
-              className={cn(
-                "w-full h-10 rounded-xl text-sm flex items-center justify-center gap-2",
-                generating || comboCount === 0
-                  ? "btn-ghost opacity-60 cursor-not-allowed"
-                  : "btn-fission",
-              )}
-            >
-              {generating ? (
-                <>
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                  裂变生成中…
-                </>
-              ) : (
-                <>
-                  <Split className="w-4 h-4" />
-                  生成 {comboCount} 个变体
-                </>
-              )}
-            </button>
+            {overLimit && (
+              <p className="text-[10px] text-red-400 mb-2">
+                超过单次上限 {MAX_COMBOS}，请减少维度组合
+              </p>
+            )}
+            {generating ? (
+              <button
+                onClick={() => cancelFission(project.id)}
+                className="w-full h-10 rounded-xl text-sm flex items-center justify-center gap-2 btn-ghost"
+              >
+                取消生成
+              </button>
+            ) : (
+              <button
+                onClick={generate}
+                disabled={comboCount === 0 || overLimit}
+                className={cn(
+                  "w-full h-10 rounded-xl text-sm flex items-center justify-center gap-2",
+                  comboCount === 0 || overLimit
+                    ? "btn-ghost opacity-60 cursor-not-allowed"
+                    : "btn-fission",
+                )}
+              >
+                <Split className="w-4 h-4" />
+                {failed ? "重新生成" : `生成 ${comboCount} 个变体`}
+              </button>
+            )}
             <p className="mt-2 text-[10px] text-bone-500 text-center">
               生成包含自动裁切、字幕重排与卡点对齐
             </p>
@@ -272,19 +286,54 @@ export default function Fission() {
             )}
           </div>
 
-          {variants.length === 0 ? (
-            <EmptyMatrix comboCount={comboCount} />
+          {failed && variants.length === 0 ? (
+            <ErrorView
+              message={fissionAsync?.error ?? "裂变生成失败"}
+              onRetry={generate}
+            />
+          ) : variants.length === 0 ? (
+            <EmptyMatrix comboCount={comboCount} overLimit={overLimit} />
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
               {variants.map((v, i) => (
-                <VariantCard
-                  key={v.id}
-                  variant={v}
-                  index={i}
-                  selected={selected.has(v.id)}
-                  onToggle={() => toggleSelect(v.id)}
-                />
+                <div key={v.id} className="relative group">
+                  <VariantCard
+                    variant={v}
+                    index={i}
+                    selected={selected.has(v.id)}
+                    onToggle={() => toggleSelect(v.id)}
+                  />
+                  {v.status === "ready" && !generating && (
+                    <button
+                      onClick={() => handleRemove(v.id)}
+                      className="absolute top-2 right-2 z-10 grid place-items-center w-7 h-7 rounded-lg bg-ink-950/70 border border-white/10 text-bone-400 hover:text-red-400 hover:border-red-500/40 opacity-0 group-hover:opacity-100 transition-all"
+                      title="删除变体"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               ))}
+            </div>
+          )}
+
+          {/* 生成中提示 */}
+          {generating && (
+            <div className="mt-4 flex items-center gap-2 text-xs text-fission-300">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+              正在流式生成变体，已就绪 {variants.filter((v) => v.status === "ready").length}/{comboCount}
+            </div>
+          )}
+          {failed && variants.length > 0 && (
+            <div className="mt-4 flex items-center gap-2 text-xs text-red-400">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {fissionAsync?.error}
+              <button
+                onClick={generate}
+                className="ml-2 flex items-center gap-1 text-red-300 hover:text-red-200"
+              >
+                <RotateCw className="w-3 h-3" /> 重试
+              </button>
             </div>
           )}
         </div>
@@ -307,6 +356,7 @@ function DimGroup({
   onToggle,
   suffix,
   labels,
+  disabled,
 }: {
   title: string;
   options: string[];
@@ -314,6 +364,7 @@ function DimGroup({
   onToggle: (v: string) => void;
   suffix?: string;
   labels?: Record<string, string>;
+  disabled?: boolean;
 }) {
   return (
     <div className="mb-5">
@@ -326,12 +377,14 @@ function DimGroup({
           return (
             <button
               key={opt}
+              disabled={disabled}
               onClick={() => onToggle(opt)}
               className={cn(
                 "px-2.5 h-7 rounded-lg text-[12px] font-medium transition-all border",
                 active
                   ? "bg-fission-500/15 border-fission-500/50 text-fission-300"
                   : "bg-white/[0.03] border-white/[0.07] text-bone-300 hover:border-white/15",
+                disabled && "opacity-50 cursor-not-allowed",
               )}
             >
               {labels?.[opt] ?? opt}
@@ -345,7 +398,13 @@ function DimGroup({
   );
 }
 
-function EmptyMatrix({ comboCount }: { comboCount: number }) {
+function EmptyMatrix({
+  comboCount,
+  overLimit,
+}: {
+  comboCount: number;
+  overLimit: boolean;
+}) {
   return (
     <div className="card-surface p-12 text-center">
       <div className="mx-auto w-16 h-16 rounded-2xl bg-fission-500/10 grid place-items-center mb-4">
@@ -354,7 +413,10 @@ function EmptyMatrix({ comboCount }: { comboCount: number }) {
       <h3 className="font-display font-bold text-lg">尚未生成变体</h3>
       <p className="text-sm text-bone-400 mt-2 max-w-sm mx-auto">
         在左侧配置裂变维度，当前组合可生成
-        <span className="text-fission-300 font-semibold"> {comboCount} </span>
+        <span className={cn("font-semibold", overLimit ? "text-red-400" : "text-fission-300")}>
+          {" "}
+          {comboCount}{" "}
+        </span>
         个变体。点击「生成」开始裂变。
       </p>
     </div>

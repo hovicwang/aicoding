@@ -1,10 +1,9 @@
 import { useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   UploadCloud,
   Film,
-  Loader2,
   Search,
   LayoutGrid,
   List as ListIcon,
@@ -12,13 +11,17 @@ import {
   Scissors,
   FileVideo,
   X,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
 import PageHeader from "@/components/ui/PageHeader";
 import ProjectCard from "@/components/cards/ProjectCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { VideoThumb } from "@/components/ui/VideoThumb";
+import { EmptyView } from "@/components/ui/StateView";
 import { ANALYSIS_STAGES } from "@/data/mock";
+import { toast } from "@/components/ui/toastStore";
 import { cn, formatDuration } from "@/lib/utils";
 import type { ProjectStatus } from "@/types";
 
@@ -30,12 +33,16 @@ const FILTERS: { key: ProjectStatus | "all"; label: string }[] = [
   { key: "distributed", label: "已分发" },
 ];
 
+const MAX_SIZE = 10 * 1024 * 1024 * 1024; // 10GB
+
 interface PendingFile {
+  file: File;
   name: string;
   size: number;
   title: string;
   sizeLabel: string;
   duration: number;
+  ext: string;
 }
 
 function formatSize(bytes: number): string {
@@ -50,14 +57,25 @@ function extOf(name: string): string {
   return m ? m[1].toUpperCase() : "MP4";
 }
 
+function validateFile(file: File): string | null {
+  if (!file.type.startsWith("video/")) {
+    return "请选择视频文件（MP4 / MOV / MKV 等）";
+  }
+  if (file.size === 0) return "文件为空，请重新选择";
+  if (file.size > MAX_SIZE) return "文件超过 10GB 上限";
+  return null;
+}
+
 export default function Upload() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const projects = useProjectStore((s) => s.projects);
-  const addProject = useProjectStore((s) => s.addProject);
-  const startAnalysis = useProjectStore((s) => s.startAnalysis);
+  const uploadAndAnalyze = useProjectStore((s) => s.uploadAndAnalyze);
+  const uploadAsync = useProjectStore((s) => s.async["upload"]);
+
   const [filter, setFilter] = useState<ProjectStatus | "all">("all");
   const [view, setView] = useState<"grid" | "list">("grid");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
 
   const [pending, setPending] = useState<PendingFile | null>(null);
   const [uploadPct, setUploadPct] = useState(0);
@@ -75,22 +93,23 @@ export default function Upload() {
   );
 
   const acceptFile = (file: File) => {
-    if (!file.type.startsWith("video/")) {
-      alert("请选择视频文件（MP4 / MOV / MKV 等）");
+    const error = validateFile(file);
+    if (error) {
+      toast.error(error);
       return;
     }
-    // 基于文件大小估算时长（每 50MB ≈ 1 分钟，仅用于演示）
     const estDuration = Math.max(
       120,
       Math.round(file.size / (50 * 1024 * 1024)) * 60,
     );
-    const title = file.name.replace(/\.[^.]+$/, "");
     setPending({
+      file,
       name: file.name,
+      title: file.name.replace(/\.[^.]+$/, ""),
       size: file.size,
-      title,
       sizeLabel: formatSize(file.size),
       duration: estDuration,
+      ext: extOf(file.name),
     });
     setUploadPct(0);
   };
@@ -108,34 +127,26 @@ export default function Upload() {
     if (file) acceptFile(file);
   };
 
-  // 模拟上传 + 创建项目 + 启动分析 + 跳转
-  const startUpload = () => {
+  const startUpload = async () => {
     if (!pending) return;
-    let pct = 0;
-    const timer = setInterval(() => {
-      pct += Math.random() * 18 + 6;
-      if (pct >= 100) {
-        pct = 100;
-        clearInterval(timer);
-        const id = addProject({
-          title: pending.title,
-          duration: pending.duration,
-          source: `${extOf(pending.name)} 原片`,
-          sizeLabel: pending.sizeLabel,
-        });
-        setPending(null);
-        setUploadPct(0);
-        startAnalysis(id);
-        navigate(`/studio/${id}`);
-      }
-      setUploadPct(Math.min(100, pct));
-    }, 220);
+    const res = await uploadAndAnalyze(pending.file, setUploadPct);
+    if (res.ok && res.projectId) {
+      setPending(null);
+      setUploadPct(0);
+      navigate(`/studio/${res.projectId}`);
+    } else {
+      // 失败：保留 pending，允许重试
+      toast.error(res.error ?? "上传失败");
+    }
   };
 
-  const cancelPending = () => {
+  const cancelUpload = () => {
+    uploadAsync?.abort?.();
     setPending(null);
     setUploadPct(0);
   };
+
+  const uploading = uploadAsync?.status === "loading";
 
   return (
     <div className="px-4 lg:px-8 py-8 max-w-[1400px] mx-auto">
@@ -146,7 +157,11 @@ export default function Upload() {
         actions={
           <button
             onClick={() => inputRef.current?.click()}
-            className="flex items-center gap-2 h-10 px-5 rounded-xl btn-gold text-sm"
+            disabled={uploading}
+            className={cn(
+              "flex items-center gap-2 h-10 px-5 rounded-xl text-sm",
+              uploading ? "btn-ghost opacity-60 cursor-not-allowed" : "btn-gold",
+            )}
           >
             <UploadCloud className="w-4 h-4" strokeWidth={2.5} />
             选择视频上传
@@ -176,9 +191,10 @@ export default function Upload() {
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
-          onClick={() => !pending && inputRef.current?.click()}
+          onClick={() => !pending && !uploading && inputRef.current?.click()}
           className={cn(
-            "relative p-10 lg:p-14 cursor-pointer transition-all",
+            "relative p-10 lg:p-14 transition-all",
+            (!pending || uploading) && "cursor-pointer",
             dragging && "bg-gold-500/[0.06]",
           )}
         >
@@ -240,47 +256,59 @@ export default function Upload() {
                         {pending.name}
                       </div>
                       <div className="text-[11px] text-bone-400 mt-0.5 font-mono">
-                        {pending.sizeLabel} · 预估 {formatDuration(pending.duration)} · {extOf(pending.name)}
+                        {pending.sizeLabel} · 预估 {formatDuration(pending.duration)} · {pending.ext}
                       </div>
                     </div>
-                    <button
-                      onClick={cancelPending}
-                      className="p-1.5 rounded-lg text-bone-400 hover:text-red-400 hover:bg-red-500/10"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    {!uploading && (
+                      <button
+                        onClick={cancelUpload}
+                        className="p-1.5 rounded-lg text-bone-400 hover:text-red-400 hover:bg-red-500/10"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
-                  {uploadPct > 0 && (
-                    <div className="mt-2.5 h-1.5 rounded-full bg-white/5 overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-gold-500 to-fission-500 transition-all duration-200"
-                        style={{ width: `${uploadPct}%` }}
-                      />
+                  {uploading && (
+                    <div className="mt-2.5">
+                      <div className="flex items-center justify-between text-[11px] text-bone-400 mb-1">
+                        <span>
+                          {uploadPct < 100 ? "上传中…" : "上传完成，启动分析…"}
+                        </span>
+                        <span className="font-mono">{Math.round(uploadPct)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-gold-500 to-fission-500 transition-all duration-200"
+                          style={{ width: `${uploadPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {uploadAsync?.status === "error" && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[12px] text-red-400">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {uploadAsync.error}
                     </div>
                   )}
                 </div>
-                <button
-                  onClick={startUpload}
-                  disabled={uploadPct > 0}
-                  className={cn(
-                    "h-10 px-5 rounded-xl text-sm shrink-0 flex items-center gap-2",
-                    uploadPct > 0
-                      ? "btn-ghost opacity-70 cursor-not-allowed"
-                      : "btn-gold",
-                  )}
-                >
-                  {uploadPct > 0 ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      上传 {Math.round(uploadPct)}%
-                    </>
-                  ) : (
-                    <>
-                      <UploadCloud className="w-4 h-4" />
-                      开始上传
-                    </>
-                  )}
-                </button>
+                {!uploading && (
+                  <button
+                    onClick={startUpload}
+                    className="h-10 px-5 rounded-xl text-sm shrink-0 flex items-center gap-2 btn-gold"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    {uploadAsync?.status === "error" ? "重新上传" : "开始上传"}
+                  </button>
+                )}
+                {uploading && (
+                  <button
+                    onClick={cancelUpload}
+                    className="h-10 px-5 rounded-xl text-sm shrink-0 flex items-center gap-2 btn-ghost"
+                  >
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    取消
+                  </button>
+                )}
               </div>
             </motion.div>
           )}
@@ -339,67 +367,83 @@ export default function Upload() {
       </div>
 
       {/* Project list */}
-      <AnimatePresence mode="wait">
-        {view === "grid" ? (
-          <motion.div
-            key="grid"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5"
-          >
-            {filtered.map((p, i) => (
-              <ProjectCard key={p.id} project={p} index={i} />
-            ))}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="list"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="card-surface overflow-hidden"
-          >
-            {filtered.map((p, i) => (
-              <button
-                key={p.id}
-                onClick={() => navigate(`/studio/${p.id}`)}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 text-left hover:bg-white/[0.03] transition-colors",
-                  i !== filtered.length - 1 && "border-b border-white/[0.05]",
-                )}
-              >
-                <div className="w-24 shrink-0">
-                  <VideoThumb
-                    gradient={p.thumbnail}
-                    ratio="16:9"
-                    duration={formatDuration(p.duration)}
-                    playing
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-display font-bold text-sm truncate">
-                      {p.title}
-                    </h3>
-                    <StatusBadge status={p.status} />
+      {filtered.length === 0 ? (
+        <EmptyView
+          icon={Film}
+          title={query ? "未找到匹配项目" : "还没有项目"}
+          desc={
+            query
+              ? "试试调整搜索关键词或筛选条件"
+              : "上传你的第一个视频，开始 AI 高光剪辑"
+          }
+        />
+      ) : (
+        <AnimatePresence mode="wait">
+          {view === "grid" ? (
+            <motion.div
+              key="grid"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5"
+            >
+              {filtered.map((p, i) => (
+                <ProjectCard key={p.id} project={p} index={i} />
+              ))}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="list"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="card-surface overflow-hidden"
+            >
+              {filtered.map((p, i) => (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    if (p.status !== "analyzing")
+                      navigate(`/studio/${p.id}`);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-4 p-3 transition-colors",
+                    p.status !== "analyzing" && "cursor-pointer hover:bg-white/[0.03]",
+                    i !== filtered.length - 1 && "border-b border-white/[0.05]",
+                  )}
+                >
+                  <div className="w-24 shrink-0">
+                    <VideoThumb
+                      gradient={p.thumbnail}
+                      ratio="16:9"
+                      duration={formatDuration(p.duration)}
+                      playing
+                    />
                   </div>
-                  <p className="text-[11px] text-bone-400 mt-1">
-                    {p.source} · {p.uploadedAt}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-display font-bold text-sm truncate">
+                        {p.title}
+                      </h3>
+                      <StatusBadge status={p.status} />
+                    </div>
+                    <p className="text-[11px] text-bone-400 mt-1">
+                      {p.source} · {p.uploadedAt}
+                    </p>
+                  </div>
+                  <div className="hidden sm:flex items-center gap-1 text-[11px] text-gold-300">
+                    <Scissors className="w-3 h-3" />
+                    {p.highlights.filter((h) => h.selected).length} 段
+                  </div>
+                  <Film className="w-4 h-4 text-bone-500" />
                 </div>
-                <div className="hidden sm:flex items-center gap-1 text-[11px] text-gold-300">
-                  <Scissors className="w-3 h-3" />
-                  {p.highlights.filter((h) => h.selected).length} 段
-                </div>
-                <Film className="w-4 h-4 text-bone-500" />
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
 
-      {/* 分析阶段说明（页脚提示） */}
+      {/* 分析阶段说明 */}
       <div className="mt-10 grid sm:grid-cols-5 gap-3">
         {ANALYSIS_STAGES.map((s, i) => (
           <div

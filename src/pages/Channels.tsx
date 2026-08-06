@@ -6,12 +6,14 @@ import {
   Unlink,
   Plus,
   TrendingUp,
+  Loader2,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
 import PageHeader from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PlatformGlyph } from "@/components/ui/PlatformGlyph";
 import { PLATFORMS } from "@/data/mock";
+import { toast } from "@/components/ui/toastStore";
 import type { PlatformKey } from "@/types";
 import { cn, formatCompact } from "@/lib/utils";
 
@@ -19,6 +21,7 @@ export default function Channels() {
   const channels = useProjectStore((s) => s.channels);
   const reconnect = useProjectStore((s) => s.reconnectChannel);
   const disconnect = useProjectStore((s) => s.disconnectChannel);
+  const asyncMap = useProjectStore((s) => s.async);
 
   return (
     <div className="px-4 lg:px-8 py-8 max-w-[1400px] mx-auto">
@@ -27,7 +30,12 @@ export default function Channels() {
         title="渠道账号管理"
         description="连接与管理你的多平台账号，授权后方可进行内容分发与数据回收。"
         actions={
-          <button className="flex items-center gap-2 h-10 px-5 rounded-xl btn-gold text-sm">
+          <button
+            onClick={() =>
+              toast.info("新渠道接入需在开放平台创建应用后配置，演示环境暂未开放")
+            }
+            className="flex items-center gap-2 h-10 px-5 rounded-xl btn-gold text-sm"
+          >
             <Plus className="w-4 h-4" strokeWidth={2.5} />
             连接新渠道
           </button>
@@ -51,12 +59,13 @@ export default function Channels() {
         {channels.map((c, i) => {
           const meta = PLATFORMS[c.platform];
           const connected = c.authStatus === "connected";
+          const busy = asyncMap[`channel-${c.id}`]?.status === "loading";
           return (
             <motion.div
               key={c.id}
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.07 }}
+              transition={{ delay: Math.min(i * 0.07, 0.35) }}
               whileHover={{ y: -4 }}
               className="card-surface p-5 relative overflow-hidden group"
             >
@@ -89,33 +98,34 @@ export default function Channels() {
                     </span>
                     <button
                       onClick={() => disconnect(c.id)}
-                      className="flex items-center gap-1.5 text-xs text-bone-300 hover:text-fission-300"
+                      disabled={busy}
+                      className="flex items-center gap-1.5 text-xs text-bone-300 hover:text-fission-300 disabled:opacity-50"
                     >
-                      <Unlink className="w-3.5 h-3.5" />
+                      {busy ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Unlink className="w-3.5 h-3.5" />
+                      )}
                       解绑
                     </button>
                   </>
                 ) : (
                   <button
                     onClick={() => reconnect(c.id)}
+                    disabled={busy}
                     className={cn(
-                      "ml-auto flex items-center gap-1.5 text-xs px-3 h-8 rounded-lg",
-                      c.authStatus === "expired"
-                        ? "btn-gold"
-                        : "btn-ghost",
+                      "ml-auto flex items-center gap-1.5 text-xs px-3 h-8 rounded-lg disabled:opacity-50",
+                      c.authStatus === "expired" ? "btn-gold" : "btn-ghost",
                     )}
                   >
-                    {c.authStatus === "expired" ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        重新授权
-                      </>
+                    {busy ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : c.authStatus === "expired" ? (
+                      <RefreshCw className="w-3.5 h-3.5" />
                     ) : (
-                      <>
-                        <Link2 className="w-3.5 h-3.5" />
-                        连接账号
-                      </>
+                      <Link2 className="w-3.5 h-3.5" />
                     )}
+                    {c.authStatus === "expired" ? "重新授权" : "连接账号"}
                   </button>
                 )}
               </div>

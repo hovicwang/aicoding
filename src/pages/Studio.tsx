@@ -21,6 +21,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import Timeline from "@/components/studio/Timeline";
 import SegmentPanel from "@/components/studio/SegmentPanel";
 import AnalysisProgress from "@/components/studio/AnalysisProgress";
+import { toast } from "@/components/ui/toastStore";
 import { cn, formatTimecode } from "@/lib/utils";
 
 export default function Studio() {
@@ -34,8 +35,12 @@ export default function Studio() {
   const analysisProgress = useProjectStore((s) =>
     projectId ? s.analysisProgress[projectId] : undefined,
   );
-  const startAnalysis = useProjectStore((s) => s.startAnalysis);
   const setProjectStatus = useProjectStore((s) => s.setProjectStatus);
+  const retryAnalysis = useProjectStore((s) => s.retryAnalysis);
+  const cancelAnalysis = useProjectStore((s) => s.cancelAnalysis);
+  const analysisAsync = useProjectStore((s) =>
+    projectId ? s.async[`analysis-${projectId}`] : undefined,
+  );
 
   const [playing, setPlaying] = useState(true);
   const [playhead, setPlayhead] = useState(0);
@@ -82,12 +87,18 @@ export default function Studio() {
     };
   }, [playing, project]);
 
-  // 若项目处于分析中且尚未启动分析流程，自动启动
+  // 若项目处于分析中且尚未启动/未失败，自动启动分析流程
   useEffect(() => {
-    if (project && project.status === "analyzing" && project.highlights.length === 0) {
-      startAnalysis(project.id);
+    if (
+      project &&
+      project.status === "analyzing" &&
+      project.highlights.length === 0 &&
+      analysisAsync?.status !== "loading" &&
+      analysisAsync?.status !== "error"
+    ) {
+      retryAnalysis(project.id);
     }
-  }, [project, startAnalysis]);
+  }, [project, analysisAsync?.status, retryAnalysis]);
 
   if (!project) {
     return (
@@ -99,8 +110,9 @@ export default function Studio() {
 
   const selectedCount = project.highlights.filter((h) => h.selected).length;
 
-  // 分析中：展示分析进度视图
+  // 分析中或分析失败：展示分析进度视图
   if (project.status === "analyzing" && project.highlights.length === 0) {
+    const failed = analysisAsync?.status === "error";
     return (
       <div className="px-4 lg:px-8 py-8 max-w-[1200px] mx-auto">
         <div className="flex items-center gap-3 mb-6">
@@ -119,6 +131,12 @@ export default function Studio() {
           stage={analysisProgress?.stage ?? 0}
           percent={analysisProgress?.percent ?? 0}
           title={project.title}
+          error={failed ? analysisAsync?.error : undefined}
+          onRetry={() => retryAnalysis(project.id)}
+          onCancel={() => {
+            cancelAnalysis(project.id);
+            navigate("/upload");
+          }}
         />
       </div>
     );
@@ -150,7 +168,10 @@ export default function Studio() {
         <div className="flex items-center gap-2">
           {project.status === "ready" && selectedCount > 0 && (
             <button
-              onClick={() => setProjectStatus(project.id, "clipped")}
+              onClick={() => {
+                setProjectStatus(project.id, "clipped");
+                toast.success("剪辑已保存，可进入裂变");
+              }}
               className="flex items-center gap-1.5 h-9 px-3 rounded-xl btn-ghost text-sm"
             >
               <Scissors className="w-4 h-4 text-gold-400" />

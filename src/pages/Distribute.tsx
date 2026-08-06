@@ -10,12 +10,16 @@ import {
   Loader2,
   CheckCircle2,
   Clock,
+  RotateCw,
+  XCircle,
 } from "lucide-react";
 import { useProjectStore } from "@/store/useProjectStore";
 import PageHeader from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PlatformGlyph } from "@/components/ui/PlatformGlyph";
+import { EmptyView } from "@/components/ui/StateView";
 import { PLATFORMS } from "@/data/mock";
+import { toast } from "@/components/ui/toastStore";
 import type { PlatformKey } from "@/types";
 import { cn, formatCompact, formatFull } from "@/lib/utils";
 
@@ -24,12 +28,21 @@ export default function Distribute() {
   const channels = useProjectStore((s) => s.channels);
   const projects = useProjectStore((s) => s.projects);
   const distribute = useProjectStore((s) => s.distribute);
+  const retryTask = useProjectStore((s) => s.retryTask);
+  const cancelTask = useProjectStore((s) => s.cancelTask);
+  const pendingDistribution = useProjectStore((s) => s.pendingDistribution);
+
   const [selectedChannels, setSelectedChannels] = useState<Set<string>>(
     new Set(channels.filter((c) => c.authStatus === "connected").map((c) => c.id)),
   );
   const [caption, setCaption] = useState("这一刻，全场沸腾 #高光时刻");
-  const [publishing, setPublishing] = useState(false);
-  const pendingDistribution = useProjectStore((s) => s.pendingDistribution);
+
+  const distributeAsync = useProjectStore((s) =>
+    pendingDistribution
+      ? s.async[`distribute-${pendingDistribution.projectId}`]
+      : undefined,
+  );
+  const publishing = distributeAsync?.status === "loading";
 
   const published = tasks.filter((t) => t.status === "published");
   const totals = useMemo(
@@ -49,7 +62,6 @@ export default function Distribute() {
     [published],
   );
 
-  // 来源项目：优先用裂变页传递的 pendingDistribution，否则回退到最近有变体的项目
   const sourceProject =
     (pendingDistribution
       ? projects.find((p) => p.id === pendingDistribution.projectId)
@@ -64,19 +76,21 @@ export default function Distribute() {
     ? sourceProject.variants.filter((v) => sourceVariantIds.includes(v.id))
     : [];
 
-  const handlePublish = () => {
-    if (!sourceProject || sourceVariantIds.length === 0 || selectedChannels.size === 0)
+  const handlePublish = async () => {
+    if (!sourceProject || sourceVariantIds.length === 0) {
+      toast.error("没有可分发的变体，请先在裂变中心生成");
       return;
-    setPublishing(true);
-    setTimeout(() => {
-      distribute(
-        sourceProject.id,
-        sourceVariantIds,
-        [...selectedChannels],
-        caption,
-      );
-      setPublishing(false);
-    }, 1800);
+    }
+    if (caption.trim().length === 0) {
+      toast.error("请填写发布文案");
+      return;
+    }
+    await distribute(
+      sourceProject.id,
+      sourceVariantIds,
+      [...selectedChannels],
+      caption.trim(),
+    );
   };
 
   const toggleChannel = (id: string) =>
@@ -96,10 +110,10 @@ export default function Distribute() {
         actions={
           <button
             onClick={handlePublish}
-            disabled={publishing || selectedChannels.size === 0}
+            disabled={publishing || selectedChannels.size === 0 || sourceVariants.length === 0}
             className={cn(
               "flex items-center gap-2 h-10 px-5 rounded-xl text-sm",
-              publishing || selectedChannels.size === 0
+              publishing || selectedChannels.size === 0 || sourceVariants.length === 0
                 ? "btn-ghost opacity-60 cursor-not-allowed"
                 : "btn-fission",
             )}
@@ -236,65 +250,94 @@ export default function Distribute() {
             </h2>
             <span className="text-[11px] text-bone-400">{tasks.length} 条任务</span>
           </div>
-          <div className="space-y-2.5">
-            {tasks.map((t, i) => {
-              const channel = channels.find((c) => c.id === t.channelId);
-              const project = projects.find((p) => p.id === t.projectId);
-              const variant = project?.variants.find((v) => v.id === t.variantId);
-              return (
-                <motion.div
-                  key={t.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                  className="card-surface p-4 flex items-center gap-4"
-                >
-                  <PlatformGlyph
-                    platform={channel?.platform as PlatformKey}
-                    size={36}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium truncate">
-                        {channel?.name}
-                      </span>
-                      <StatusBadge status={t.status} />
-                      {variant && (
-                        <span className="chip bg-white/[0.04] text-bone-300">
-                          {variant.aspectRatio} · {variant.duration}s · {variant.style}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-bone-400 mt-1 line-clamp-1">
-                      {t.caption}
-                    </p>
-                    {t.publishedAt && (
-                      <p className="text-[10px] text-bone-500 mt-0.5 font-mono">
-                        {t.publishedAt}
-                      </p>
+          {tasks.length === 0 ? (
+            <EmptyView
+              icon={Send}
+              title="暂无分发任务"
+              desc="在裂变中心选择变体后，点击「分发选中」即可在此发布"
+            />
+          ) : (
+            <div className="space-y-2.5">
+              {tasks.map((t, i) => {
+                const channel = channels.find((c) => c.id === t.channelId);
+                const project = projects.find((p) => p.id === t.projectId);
+                const variant = project?.variants.find((v) => v.id === t.variantId);
+                return (
+                  <motion.div
+                    key={t.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i * 0.04, 0.3) }}
+                    className={cn(
+                      "card-surface p-4 flex items-center gap-4",
+                      t.status === "failed" && "border-red-500/25",
                     )}
-                  </div>
-                  {t.stats ? (
-                    <div className="hidden sm:grid grid-cols-4 gap-3 text-center shrink-0">
-                      <Stat icon={Eye} v={t.stats.views} />
-                      <Stat icon={Heart} v={t.stats.likes} />
-                      <Stat icon={MessageCircle} v={t.stats.comments} />
-                      <Stat icon={Share2} v={t.stats.shares} />
-                    </div>
-                  ) : (
-                    <div className="shrink-0">
-                      {t.status === "publishing" && (
-                        <Loader2 className="w-4 h-4 text-gold-400 animate-spin" />
+                  >
+                    <PlatformGlyph
+                      platform={channel?.platform as PlatformKey}
+                      size={36}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium truncate">
+                          {channel?.name ?? "未知渠道"}
+                        </span>
+                        <StatusBadge status={t.status} />
+                        {variant && (
+                          <span className="chip bg-white/[0.04] text-bone-300">
+                            {variant.aspectRatio} · {variant.duration}s · {variant.style}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-bone-400 mt-1 line-clamp-1">
+                        {t.caption}
+                      </p>
+                      {t.publishedAt && (
+                        <p className="text-[10px] text-bone-500 mt-0.5 font-mono">
+                          {t.publishedAt}
+                        </p>
                       )}
-                      {t.status === "queued" && (
-                        <Clock className="w-4 h-4 text-bone-400" />
-                      )}
                     </div>
-                  )}
-                </motion.div>
-              );
-            })}
-          </div>
+                    {t.stats ? (
+                      <div className="hidden sm:grid grid-cols-4 gap-3 text-center shrink-0">
+                        <Stat icon={Eye} v={t.stats.views} />
+                        <Stat icon={Heart} v={t.stats.likes} />
+                        <Stat icon={MessageCircle} v={t.stats.comments} />
+                        <Stat icon={Share2} v={t.stats.shares} />
+                      </div>
+                    ) : t.status === "failed" ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => retryTask(t.id)}
+                          className="flex items-center gap-1 px-2 h-7 rounded-lg text-[11px] text-red-300 hover:bg-red-500/10"
+                          title="重试"
+                        >
+                          <RotateCw className="w-3 h-3" />
+                          重试
+                        </button>
+                        <button
+                          onClick={() => cancelTask(t.id)}
+                          className="p-1.5 rounded-lg text-bone-500 hover:text-red-400 hover:bg-red-500/10"
+                          title="移除"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="shrink-0">
+                        {t.status === "publishing" && (
+                          <Loader2 className="w-4 h-4 text-gold-400 animate-spin" />
+                        )}
+                        {t.status === "queued" && (
+                          <Clock className="w-4 h-4 text-bone-400" />
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
