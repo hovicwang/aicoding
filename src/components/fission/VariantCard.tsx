@@ -76,7 +76,7 @@ export default function VariantCard({
               playsInline
               muted
               loop
-              preload="metadata"
+              preload="none"
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onClick={togglePlay}

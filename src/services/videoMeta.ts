@@ -20,11 +20,19 @@ export function probeVideo(file: File | Blob): Promise<VideoMeta> {
     video.src = url;
 
     let settled = false;
+    let revoked = false;
 
     const cleanup = () => {
-      // 仅 revoke blob URL，不强制 removeAttribute+load（会触发 ERR_ABORTED）。
-      // revoke 后 video 自然无法继续加载，且该 video 元素未挂载到 DOM，无需 load()。
-      URL.revokeObjectURL(url);
+      if (revoked) return;
+      revoked = true;
+      // 先 pause 停止内部网络加载，再延迟 revoke。
+      // 立即 revoke 会中断 <video> 进行中/重试的请求，产生 ERR_ABORTED +
+      // ERR_FILE_NOT_FOUND（浏览器重试已失效的 blob URL）。延迟 1.5s 让浏览器
+      // 完成内部清理，revoke 时已无活跃请求。
+      try { video.pause(); } catch { /* 忽略 */ }
+      setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch { /* 忽略 */ }
+      }, 1500);
     };
 
     const onMeta = () => {
