@@ -322,12 +322,14 @@ export const useProjectStore = create<ProjectState>()(
           abort: () => controller.abort(),
         });
 
+        const project = get().projects.find((p) => p.id === projectId);
         const r = await clipService.fission({
           projectId,
           ratios: params.ratios as never,
           durations: params.durations as never,
           platforms: params.platforms as never,
           styles: params.styles,
+          videoDuration: project?.duration ?? 0,
           onVariantReady: (v) => {
             onVariantReady?.(v);
             // 流式持久化：每就绪一个即写入 store

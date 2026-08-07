@@ -22,9 +22,9 @@ export function probeVideo(file: File | Blob): Promise<VideoMeta> {
     let settled = false;
 
     const cleanup = () => {
+      // 仅 revoke blob URL，不强制 removeAttribute+load（会触发 ERR_ABORTED）。
+      // revoke 后 video 自然无法继续加载，且该 video 元素未挂载到 DOM，无需 load()。
       URL.revokeObjectURL(url);
-      video.removeAttribute("src");
-      video.load();
     };
 
     const onMeta = () => {

@@ -15,7 +15,7 @@ import {
   generateHighlights,
   THUMB_GRADIENTS,
 } from "@/data/mock";
-import { saveSourceVideo, getSourceVideo } from "./videoStore";
+import { saveSourceVideo } from "./videoStore";
 import { probeVideo } from "./videoMeta";
 import { transcodeVariant } from "./ffmpegService";
 
@@ -62,6 +62,8 @@ export interface FissionParams {
   durations: ClipDuration[];
   platforms: PlatformKey[];
   styles: string[];
+  /** 原视频真实时长（秒），用于计算安全起始点，避免 seek 超出时长 */
+  videoDuration?: number;
   /** 单个变体就绪回调，用于流式更新 UI */
   onVariantReady?: (variant: Variant, index: number, total: number) => void;
   signal?: AbortSignal;
@@ -241,6 +243,7 @@ export const mockClipService: ClipService = {
     durations,
     platforms,
     styles,
+    videoDuration,
     onVariantReady,
     signal,
   }): Promise<Result<FissionResponse>> {
@@ -269,18 +272,7 @@ export const mockClipService: ClipService = {
         ),
       );
 
-      // 读取原视频真实时长，用于计算安全起始点（避免 seek 超出时长导致转码失败）
-      let videoDuration = 0;
-      try {
-        const blob = await getSourceVideo(projectId);
-        if (blob) {
-          const meta = await probeVideo(blob);
-          videoDuration = meta.duration;
-        }
-      } catch {
-        // 读取失败不阻塞，safeStart 会回退到 0
-      }
-
+      // videoDuration 由 store 从 project.duration 传入（上传时 probeVideo 已记录真实时长）
       const total = combos.length;
       for (let i = 0; i < total; i++) {
         if (signal?.aborted) throw new Error("aborted");

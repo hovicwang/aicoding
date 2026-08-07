@@ -56,17 +56,34 @@ export function useSourceVideoUrl(videoUrl: string | undefined): VideoUrlState {
   return state;
 }
 
-/** 变体视频 URL 解析 */
-export function useVariantVideoUrl(variantId: string): VideoUrlState {
+/**
+ * 变体视频 URL 解析。
+ * 仅在 enabled 为 true 时查询（变体 ready 后才查询），避免 generating 阶段空查询。
+ * enabled 从 false→true 时会重新触发查询。
+ */
+export function useVariantVideoUrl(
+  variantId: string,
+  enabled = true,
+): VideoUrlState {
   const [state, setState] = useState<VideoUrlState>(IDLE);
 
   useEffect(() => {
+    if (!enabled) {
+      setState({ url: null, loading: false, error: null });
+      return;
+    }
     let active = true;
     setState(IDLE);
     getVariantVideoUrl(variantId)
       .then((u) => {
         if (!active) return;
-        setState({ url: u, loading: false, error: null });
+        if (u) setState({ url: u, loading: false, error: null });
+        else
+          setState({
+            url: null,
+            loading: false,
+            error: "变体视频不存在",
+          });
       })
       .catch((e) => {
         if (active)
@@ -79,7 +96,7 @@ export function useVariantVideoUrl(variantId: string): VideoUrlState {
     return () => {
       active = false;
     };
-  }, [variantId]);
+  }, [variantId, enabled]);
 
   return state;
 }
