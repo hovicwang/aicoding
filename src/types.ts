@@ -30,6 +30,8 @@ export interface Variant {
   style: string;
   thumbnail: string;
   status: "generating" | "ready" | "failed";
+  /** 失败原因（status=failed 时填充），用于 UI 展示与排查 */
+  error?: string;
 }
 
 export type PlatformKey =

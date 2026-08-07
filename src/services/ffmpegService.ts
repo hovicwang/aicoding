@@ -29,6 +29,13 @@ let ffmpegInstance: FFmpeg | null = null;
 let loadPromise: Promise<FFmpeg> | null = null;
 // 当前转码进度回调（每次 transcodeVariant 调用前赋值）
 let currentProgressCb: ((p: TranscodeProgress) => void) | null = null;
+// 最近 ffmpeg 日志循环缓冲：exec 失败时取出，带进错误信息便于排查
+const LOG_BUF_SIZE = 40;
+const recentLogs: string[] = [];
+const pushLog = (msg: string) => {
+  recentLogs.push(msg);
+  if (recentLogs.length > LOG_BUF_SIZE) recentLogs.shift();
+};
 
 /** 带超时的 toBlobURL，单个源失败切下一个 */
 async function loadCoreWithFallback(): Promise<{ coreURL: string; wasmURL: string }> {
@@ -60,8 +67,9 @@ async function getFFmpeg(
 
   loadPromise = (async () => {
     const ff = new FFmpeg();
-    ff.on("log", () => {
-      // 日志可在此接入埋点，不影响主流程
+    ff.on("log", ({ message }) => {
+      // 收集日志，exec 失败时带进错误信息便于排查
+      if (message) pushLog(message);
     });
     ff.on("progress", ({ progress }) => {
       currentProgressCb?.({
@@ -156,6 +164,8 @@ export async function transcodeVariant(params: {
 
   const inputName = `in_${projectId}_${variantId}.mp4`;
   const outputName = `out_${variantId}.mp4`;
+  // 每次转码前清空日志缓冲，确保错误信息只对应本次执行
+  recentLogs.length = 0;
   try {
     onProgress?.({ ratio: 0, stage: "preparing" });
     await ff.writeFile(inputName, await fetchFile(sourceBlob));
@@ -169,10 +179,14 @@ export async function transcodeVariant(params: {
 
     onProgress?.({ ratio: 0.05, stage: "transcoding" });
     // -ss/-t 放在 -i 之后（output seeking），即使 seek 超出也不会崩溃
-    await ff.exec([
+    // -map 0:v:0 -map 0:a? ：视频流必选、音频流可选，避免无声视频因 -c:a 失败
+    // 注意：@ffmpeg/ffmpeg 的 exec 返回 ret code（0 成功），失败时不抛错，需手动检查
+    const ret = await ff.exec([
       "-i", inputName,
       "-ss", String(ss),
       "-t", String(duration),
+      "-map", "0:v:0",
+      "-map", "0:a?",
       "-vf", `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`,
       "-c:v", "libx264",
       "-preset", "veryfast",
@@ -183,12 +197,18 @@ export async function transcodeVariant(params: {
       "-y",
       outputName,
     ]);
+    // ffmpeg 失败时 exec 仍 resolve，必须检查 ret code
+    if (ret !== 0) {
+      const tail = recentLogs.slice(-15).join(" | ");
+      throw new Error(`转码失败(code ${ret})：${tail || "ffmpeg 未输出日志"}`);
+    }
 
     const data = await ff.readFile(outputName);
     const blob = new Blob([data as Uint8Array], { type: "video/mp4" });
     // 输出为空说明裁切失败（如视频太短），拒绝生成空文件
     if (blob.size < 1000) {
-      throw new Error("转码输出为空，原视频可能短于目标时长");
+      const tail = recentLogs.slice(-15).join(" | ");
+      throw new Error(`转码输出为空：${tail || "原视频可能短于目标时长"}`);
     }
     await saveVariantVideo(variantId, blob);
 

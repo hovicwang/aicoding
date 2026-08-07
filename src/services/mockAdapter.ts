@@ -18,6 +18,7 @@ import {
 import { saveSourceVideo } from "./videoStore";
 import { probeVideo } from "./videoMeta";
 import { transcodeVariant } from "./ffmpegService";
+import { toast } from "@/components/ui/toastStore";
 
 /* ============================================================
  * API 契约：后端就绪后由真实 HTTP 实现这些接口，UI 无需改动。
@@ -274,6 +275,7 @@ export const mockClipService: ClipService = {
 
       // videoDuration 由 store 从 project.duration 传入（上传时 probeVideo 已记录真实时长）
       const total = combos.length;
+      let firstError = "";
       for (let i = 0; i < total; i++) {
         if (signal?.aborted) throw new Error("aborted");
         const combo = combos[i];
@@ -292,11 +294,20 @@ export const mockClipService: ClipService = {
           onVariantReady?.(v, i, total);
         } catch (e) {
           if ((e as Error).message === "aborted") throw e;
-          // 单个变体失败标记为 failed，继续处理其余
-          const v = { ...combo, status: "failed" as const };
+          // 单个变体失败标记为 failed（带错误原因），继续处理其余
+          const reason = e instanceof Error ? e.message : String(e);
+          if (!firstError) firstError = reason;
+          const v = { ...combo, status: "failed" as const, error: reason };
           combos[i] = v;
           onVariantReady?.(v, i, total);
         }
+      }
+      // 有变体失败时 toast 提示真实原因，便于排查
+      const failedCount = combos.filter((c) => c.status === "failed").length;
+      if (failedCount > 0) {
+        toast.error(
+          `${failedCount}/${total} 个变体生成失败：${firstError.slice(0, 120)}`,
+        );
       }
       const flaky = maybeFail<null>(null);
       if (!flaky.ok) return flaky;

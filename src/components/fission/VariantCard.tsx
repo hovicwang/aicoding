@@ -124,6 +124,14 @@ export default function VariantCard({
               <div className="text-center px-3">
                 <AlertTriangle className="w-5 h-5 text-red-400 mx-auto mb-1" />
                 <p className="text-[10px] text-red-300">生成失败</p>
+                {variant.error && (
+                  <p
+                    className="mt-1 text-[9px] text-red-400/70 leading-tight line-clamp-3 break-all"
+                    title={variant.error}
+                  >
+                    {variant.error}
+                  </p>
+                )}
               </div>
             ) : null}
           </div>
