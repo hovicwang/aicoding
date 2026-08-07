@@ -15,7 +15,7 @@ import {
   generateHighlights,
   THUMB_GRADIENTS,
 } from "@/data/mock";
-import { saveSourceVideo } from "./videoStore";
+import { saveSourceVideo, getSourceVideo } from "./videoStore";
 import { probeVideo } from "./videoMeta";
 import { transcodeVariant } from "./ffmpegService";
 
@@ -269,19 +269,31 @@ export const mockClipService: ClipService = {
         ),
       );
 
+      // 读取原视频真实时长，用于计算安全起始点（避免 seek 超出时长导致转码失败）
+      let videoDuration = 0;
+      try {
+        const blob = await getSourceVideo(projectId);
+        if (blob) {
+          const meta = await probeVideo(blob);
+          videoDuration = meta.duration;
+        }
+      } catch {
+        // 读取失败不阻塞，safeStart 会回退到 0
+      }
+
       const total = combos.length;
       for (let i = 0; i < total; i++) {
         if (signal?.aborted) throw new Error("aborted");
         const combo = combos[i];
         try {
           // 真实 ffmpeg 转码：裁切指定时长 + 适配目标比例
-          const startSec = i * combo.duration; // 简单错开起始点，避免片段重叠
           await transcodeVariant({
             projectId,
             variantId: combo.id,
             aspectRatio: combo.aspectRatio,
             duration: combo.duration,
-            start: startSec,
+            videoDuration,
+            index: i,
           });
           const v = { ...combo, status: "ready" as const };
           combos[i] = v;

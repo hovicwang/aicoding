@@ -7,19 +7,8 @@ export default defineConfig({
   build: {
     sourcemap: 'hidden',
   },
-  // ffmpeg.wasm 需要 SharedArrayBuffer，要求跨源隔离（COOP/COEP 头）
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
-  preview: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
+  // 注意：@ffmpeg/core（单线程版）通过 Web Worker 运行，不需要 SharedArrayBuffer，
+  // 因此无需 COOP/COEP 跨源隔离头。配置 COEP 反而会阻断从 CDN 加载 ffmpeg 核心。
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },

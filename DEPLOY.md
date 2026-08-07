@@ -1,20 +1,12 @@
 # ClipForge AI 生产环境部署指南
 
-## 必需的服务端响应头
+## 服务端配置
 
-ffmpeg.wasm 依赖 `SharedArrayBuffer`，要求页面具备**跨源隔离**（Cross-Origin Isolation）状态。
-生产服务器必须下发以下两个 HTTP 响应头：
+本项目使用 `@ffmpeg/core` 单线程版（通过 Web Worker 运行），**不需要 SharedArrayBuffer / COOP / COEP 跨源隔离头**。
 
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
+生产服务器只需标准的 SPA 静态托管配置即可。
 
-缺少这两个头会导致 `self.crossOriginIsolated === false`，`SharedArrayBuffer` 不可用，ffmpeg.wasm 裂变功能将失败。
-
-### 常见服务器配置
-
-#### Nginx
+### Nginx
 ```nginx
 server {
     listen 443 ssl http2;
@@ -23,10 +15,6 @@ server {
     # 静态资源根目录（vite build 产物）
     root /var/www/clipforge/dist;
     index index.html;
-
-    # 跨源隔离头（ffmpeg.wasm 必须）
-    add_header Cross-Origin-Opener-Policy "same-origin" always;
-    add_header Cross-Origin-Embedder-Policy "require-corp" always;
 
     # SPA 路由兜底
     location / {
@@ -37,38 +25,17 @@ server {
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
-        # 注意：COEP 头需要在所有资源响应上保持，Nginx add_header 默认只对 2xx 生效
-        add_header Cross-Origin-Embedder-Policy "require-corp" always;
     }
 }
 ```
 
-#### Vercel / Netlify
-在项目根目录配置文件中加入：
+### Vercel / Netlify
 ```json
 // vercel.json
 {
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
-        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
-      ]
-    }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
 ```
-
-### 跨源资源注意事项
-
-开启 `COEP: require-corp` 后，所有跨源资源（字体、图片、脚本）必须满足以下任一条件：
-1. 响应头包含 `Cross-Origin-Resource-Policy: cross-origin`
-2. 资源通过 `crossorigin="anonymous"` 加载且服务器返回正确的 CORS 头
-3. 资源与页面同源
-
-本项目已为 Google Fonts 链接添加 `crossorigin="anonymous"`。
-若仍有资源被阻断，请将它们改为同源托管（如 `@fontsource` 自托管字体）。
 
 ## 浏览器存储配额
 
