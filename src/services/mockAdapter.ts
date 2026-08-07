@@ -84,6 +84,8 @@ export interface DistributeParams {
     status: DistributionTask["status"],
     stats?: DistributionStats,
   ) => void;
+  /** 取消信号 */
+  signal?: AbortSignal;
 }
 
 export interface DistributeResponse {
@@ -308,6 +310,7 @@ export const mockClipService: ClipService = {
     caption,
     taskIds,
     onTaskUpdate,
+    signal,
   }): Promise<Result<DistributeResponse>> {
     try {
       void projectId;
@@ -315,14 +318,19 @@ export const mockClipService: ClipService = {
       for (let idx = 0; idx < taskIds.length; idx++) {
         const taskId = taskIds[idx];
         // queued → publishing
-        await delay(600 + idx * 100, undefined);
+        await delay(600 + idx * 100, signal);
         onTaskUpdate?.(taskId, "publishing");
         // publishing → published + stats
-        await delay(1200 + idx * 200, undefined);
+        await delay(1200 + idx * 200, signal);
         onTaskUpdate?.(taskId, "published", rollStats());
       }
+      const flaky = maybeFail<null>(null);
+      if (!flaky.ok) return flaky;
       return ok({ taskIds });
-    } catch {
+    } catch (e) {
+      if ((e as Error).message === "aborted") {
+        return err(ERROR_CODES.NETWORK, "分发已取消", false);
+      }
       return err(ERROR_CODES.INTERNAL, "分发失败，可重试", true);
     }
   },

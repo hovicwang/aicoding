@@ -76,9 +76,9 @@ export function probeVideo(file: File | Blob): Promise<VideoMeta> {
     video.addEventListener("loadedmetadata", onMeta, { once: true });
     video.addEventListener("error", onError, { once: true });
 
-    // 兜底超时（某些容器 metadata 加载缓慢）
+    // 兜底超时（某些容器 metadata 加载缓慢或无法解码）
     setTimeout(() => {
-      if (!settled && video.readyState === 0) onError();
+      if (!settled) onError();
     }, 8000);
   });
 }

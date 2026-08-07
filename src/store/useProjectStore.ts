@@ -54,6 +54,7 @@ interface ProjectState {
   setProjectStatus: (projectId: string, status: ProjectStatus) => void;
   deleteProject: (projectId: string) => void;
   setPendingDistribution: (projectId: string, variantIds: string[]) => void;
+  clearPendingDistribution: () => void;
   removeVariant: (projectId: string, variantId: string) => void;
   getProject: (projectId: string) => Project | undefined;
 
@@ -179,6 +180,8 @@ export const useProjectStore = create<ProjectState>()(
       setPendingDistribution: (projectId, variantIds) =>
         set({ pendingDistribution: { projectId, variantIds } }),
 
+      clearPendingDistribution: () => set({ pendingDistribution: null }),
+
       removeVariant: (projectId, variantId) => {
         void deleteVariantVideo(variantId);
         revokeProjectUrls(projectId, [variantId]);
@@ -247,6 +250,8 @@ export const useProjectStore = create<ProjectState>()(
         const project = get().projects.find((p) => p.id === projectId);
         if (!project) return;
         const key = `analysis-${projectId}`;
+        // 幂等：已有进行中的分析则不重复触发
+        if (get().async[key]?.status === "loading") return;
         const controller = new AbortController();
         setAsync(set, key, {
           status: "loading",
@@ -278,6 +283,11 @@ export const useProjectStore = create<ProjectState>()(
         });
         const ar = unwrap(r);
         if (!ar.ok) {
+          // 用户主动取消：静默置 idle，不弹错误 toast
+          if (controller.signal.aborted) {
+            setAsync(set, key, { status: "idle", abort: undefined });
+            return;
+          }
           setAsync(set, key, { status: "error", error: ar.error, abort: undefined });
           toast.error(ar.error);
           return;
@@ -361,7 +371,12 @@ export const useProjectStore = create<ProjectState>()(
           return { ok: false, error: "未选择渠道" };
         }
         const key = `distribute-${projectId}`;
-        setAsync(set, key, { status: "loading", error: undefined });
+        const controller = new AbortController();
+        setAsync(set, key, {
+          status: "loading",
+          error: undefined,
+          abort: () => controller.abort(),
+        });
 
         // 先创建 queued 任务，UI 立即可见
         const newTasks: DistributionTask[] = [];
@@ -393,6 +408,7 @@ export const useProjectStore = create<ProjectState>()(
           channelIds,
           caption,
           taskIds: newTasks.map((t) => t.id),
+          signal: controller.signal,
           onTaskUpdate: (taskId, status, stats) =>
             set((s) => ({
               tasks: s.tasks.map((t) =>
@@ -412,19 +428,20 @@ export const useProjectStore = create<ProjectState>()(
         });
         const dr = unwrap(r);
         if (!dr.ok) {
-          // 整体失败：把本次 queued 任务标记 failed
+          // 整体失败/取消：把仍处于 queued/publishing 的本次任务标记 failed
           set((s) => ({
             tasks: s.tasks.map((t) =>
-              newTasks.some((nt) => nt.id === t.id)
+              newTasks.some((nt) => nt.id === t.id) &&
+              (t.status === "queued" || t.status === "publishing")
                 ? { ...t, status: "failed" as const }
                 : t,
             ),
           }));
-          setAsync(set, key, { status: "error", error: dr.error });
-          toast.error(dr.error);
+          setAsync(set, key, { status: "error", error: dr.error, abort: undefined });
+          if (!controller.signal.aborted) toast.error(dr.error);
           return { ok: false, error: dr.error };
         }
-        setAsync(set, key, { status: "success" });
+        setAsync(set, key, { status: "success", abort: undefined });
         toast.success(`已提交 ${newTasks.length} 个分发任务`);
         return { ok: true };
       },
@@ -432,6 +449,12 @@ export const useProjectStore = create<ProjectState>()(
       retryTask: (taskId) => {
         const task = get().tasks.find((t) => t.id === taskId);
         if (!task) return;
+        const key = `retry-${taskId}`;
+        const controller = new AbortController();
+        setAsync(set, key, {
+          status: "loading",
+          abort: () => controller.abort(),
+        });
         set((s) => ({
           tasks: s.tasks.map((t) =>
             t.id === taskId ? { ...t, status: "queued" as const, stats: undefined } : t,
@@ -439,12 +462,13 @@ export const useProjectStore = create<ProjectState>()(
         }));
         // 重新走单任务状态推进
         (async () => {
-          await clipService.distribute({
+          const r = await clipService.distribute({
             projectId: task.projectId,
             variantIds: [task.variantId],
             channelIds: [task.channelId],
             caption: task.caption,
             taskIds: [task.id],
+            signal: controller.signal,
             onTaskUpdate: (tid, status, stats) =>
               set((s) => ({
                 tasks: s.tasks.map((t) =>
@@ -462,18 +486,40 @@ export const useProjectStore = create<ProjectState>()(
                 ),
               })),
           });
+          const dr = unwrap(r);
+          if (!dr.ok) {
+            set((s) => ({
+              tasks: s.tasks.map((t) =>
+                t.id === taskId && (t.status === "queued" || t.status === "publishing")
+                  ? { ...t, status: "failed" as const }
+                  : t,
+              ),
+            }));
+            setAsync(set, key, { status: "error", error: dr.error, abort: undefined });
+            if (!controller.signal.aborted) toast.error(dr.error);
+          } else {
+            setAsync(set, key, { status: "success", abort: undefined });
+          }
         })();
         toast.info("任务已重新加入队列");
       },
 
-      cancelTask: (taskId) =>
+      cancelTask: (taskId) => {
+        // 若有进行中的 retry abort 它
+        const retryAsync = get().async[`retry-${taskId}`];
+        retryAsync?.abort?.();
         set((s) => ({
           tasks: s.tasks.map((t) =>
-            t.id === taskId
+            t.id === taskId &&
+            (t.status === "queued" || t.status === "publishing")
               ? { ...t, status: "failed" as const }
               : t,
           ),
-        })),
+          async: Object.fromEntries(
+            Object.entries(s.async).filter(([k]) => k !== `retry-${taskId}`),
+          ),
+        }));
+      },
 
       /* ---------- 渠道 ---------- */
       reconnectChannel: async (channelId) => {
@@ -516,12 +562,11 @@ export const useProjectStore = create<ProjectState>()(
     }),
     {
       name: "clipforge-store",
-      // analysisProgress 一并持久化，刷新后可恢复进行中的分析视图
+      // analysisProgress 不持久化：它只是临时进度，刷新后由 Studio effect 重新触发分析
       partialize: (state) => ({
         projects: state.projects,
         channels: state.channels,
         tasks: state.tasks,
-        analysisProgress: state.analysisProgress,
         pendingDistribution: state.pendingDistribution,
       }),
     },

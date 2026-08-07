@@ -10,20 +10,32 @@ const STORE_SOURCE = "sourceVideos"; // 原始视频：key = projectId
 const STORE_VARIANT = "variantVideos"; // 变体视频：key = variantId
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let dbAvailable = true; // 隐私模式/不支持时置 false，避免反复尝试
 
 function openDB(): Promise<IDBDatabase> {
+  if (!dbAvailable) return Promise.reject(new Error("IndexedDB 不可用"));
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_SOURCE))
-        db.createObjectStore(STORE_SOURCE);
-      if (!db.objectStoreNames.contains(STORE_VARIANT))
-        db.createObjectStore(STORE_VARIANT);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    try {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE_SOURCE))
+          db.createObjectStore(STORE_SOURCE);
+        if (!db.objectStoreNames.contains(STORE_VARIANT))
+          db.createObjectStore(STORE_VARIANT);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => {
+        dbAvailable = false;
+        dbPromise = null;
+        reject(req.error ?? new Error("IndexedDB 打开失败"));
+      };
+    } catch (e) {
+      dbAvailable = false;
+      dbPromise = null;
+      reject(e);
+    }
   });
   return dbPromise;
 }
@@ -37,7 +49,9 @@ function put(store: string, key: string, blob: Blob): Promise<void> {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       }),
-  );
+  ).catch(() => {
+    // IDB 不可用时静默失败，调用方应检查返回值
+  });
 }
 
 function get(store: string, key: string): Promise<Blob | undefined> {
@@ -49,7 +63,7 @@ function get(store: string, key: string): Promise<Blob | undefined> {
         r.onsuccess = () => resolve(r.result as Blob | undefined);
         r.onerror = () => reject(r.error);
       }),
-  );
+  ).catch(() => undefined as Blob | undefined);
 }
 
 function del(store: string, key: string): Promise<void> {
@@ -61,7 +75,9 @@ function del(store: string, key: string): Promise<void> {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       }),
-  );
+  ).catch(() => {
+    // 删除失败不阻塞主流程
+  });
 }
 
 /* ---------- 原始视频 ---------- */

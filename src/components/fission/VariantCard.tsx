@@ -26,7 +26,7 @@ export default function VariantCard({
     "4:5": "竖卡",
   };
 
-  const videoUrl = useVariantVideoUrl(variant.id);
+  const { url: videoUrl } = useVariantVideoUrl(variant.id);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
 

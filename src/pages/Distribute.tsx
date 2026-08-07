@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import {
   Send,
@@ -31,6 +31,25 @@ export default function Distribute() {
   const retryTask = useProjectStore((s) => s.retryTask);
   const cancelTask = useProjectStore((s) => s.cancelTask);
   const pendingDistribution = useProjectStore((s) => s.pendingDistribution);
+  const clearPendingDistribution = useProjectStore((s) => s.clearPendingDistribution);
+
+  // pendingDistribution 指向的变体若已失效（项目/变体被删），提示并清空
+  useEffect(() => {
+    if (!pendingDistribution) return;
+    const proj = projects.find((p) => p.id === pendingDistribution.projectId);
+    if (!proj) {
+      toast.info("原待分发项目已删除，请重新选择");
+      clearPendingDistribution();
+      return;
+    }
+    const valid = pendingDistribution.variantIds.every((vid) =>
+      proj.variants.some((v) => v.id === vid),
+    );
+    if (!valid && pendingDistribution.variantIds.length > 0) {
+      toast.info("部分待分发变体已失效，请重新选择");
+      clearPendingDistribution();
+    }
+  }, [pendingDistribution, projects, clearPendingDistribution]);
 
   const [selectedChannels, setSelectedChannels] = useState<Set<string>>(
     new Set(channels.filter((c) => c.authStatus === "connected").map((c) => c.id)),

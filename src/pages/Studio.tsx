@@ -55,7 +55,8 @@ export default function Studio() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerWrapRef = useRef<HTMLDivElement>(null);
 
-  const videoUrl = useSourceVideoUrl(project?.videoUrl);
+  const { url: videoUrl, loading: videoLoading, error: videoError } =
+    useSourceVideoUrl(project?.videoUrl);
 
   const toggleFullscreen = () => {
     const el = playerWrapRef.current;
@@ -244,36 +245,42 @@ export default function Studio() {
                 />
               ) : (
                 <div className="w-full aspect-video grid place-items-center bg-gradient-to-br from-ink-900 to-ink-950">
-                  {loadError ? (
+                  {videoError ? (
                     <div className="text-center px-6">
                       <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-2" />
-                      <p className="text-sm text-red-300">{loadError}</p>
+                      <p className="text-sm text-red-300">{videoError}</p>
+                      <button
+                        onClick={() => navigate("/upload")}
+                        className="mt-3 text-xs text-gold-300 hover:text-gold-200"
+                      >
+                        返回上传
+                      </button>
                     </div>
-                  ) : (
+                  ) : videoLoading ? (
                     <div className="text-center">
                       <Loader2 className="w-8 h-8 text-gold-400 animate-spin mx-auto mb-2" />
                       <p className="text-xs text-bone-400">正在加载视频…</p>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               )}
 
               {/* 加载中指示 */}
-              {waiting && videoUrl && !loadError && (
+              {waiting && videoUrl && !loadError && !videoError && (
                 <div className="absolute inset-0 grid place-items-center bg-black/30 pointer-events-none">
                   <Loader2 className="w-8 h-8 text-gold-400 animate-spin" />
                 </div>
               )}
 
               {/* 字幕（基于高光片段标签） */}
-              {showSubtitle && playing && videoUrl && !loadError && (
+              {showSubtitle && playing && videoUrl && !loadError && !videoError && (
                 <div className="absolute left-1/2 -translate-x-1/2 bottom-12 px-3 py-1 rounded bg-black/60 backdrop-blur text-[12px] text-white/90 max-w-[80%]">
                   {currentCaption(project.highlights, playhead)}
                 </div>
               )}
 
               {/* 大播放按钮 */}
-              {videoUrl && !loadError && (
+              {videoUrl && !loadError && !videoError && (
                 <button
                   onClick={() => setPlaying((p) => !p)}
                   className="absolute inset-0 grid place-items-center"
